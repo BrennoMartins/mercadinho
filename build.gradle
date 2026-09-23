@@ -2,6 +2,7 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.1.1'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'jacoco'
 }
 
 group = 'br.com.aromasabor'
@@ -17,19 +18,21 @@ repositories {
 	mavenCentral()
 }
 
+jacoco {
+	toolVersion = '0.8.13'
+}
+
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.flywaydb:flyway-database-postgresql'
+	implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13"
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'org.postgresql:postgresql'
 	annotationProcessor 'org.projectlombok:lombok'
-	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
-	testImplementation 'org.springframework.boot:spring-boot-starter-flyway-test'
-	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
-	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
@@ -37,4 +40,42 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	finalizedBy(tasks.named('jacocoTestReport'))
+}
+
+tasks.named('jacocoTestReport') {
+	reports {
+		xml.required = true
+		html.required = true
+	}
+}
+
+tasks.named('jacocoTestCoverageVerification') {
+	dependsOn(tasks.named('test'))
+	violationRules {
+		rule {
+			element = 'PACKAGE'
+			includes = [
+				'br.com.aromasabor.mercadinho.category.service.*',
+				'br.com.aromasabor.mercadinho.product.service.*'
+			]
+			excludes = [
+				'br.com.aromasabor.mercadinho.MercadinhoApplication',
+				'br.com.aromasabor.mercadinho.category.dto.*',
+				'br.com.aromasabor.mercadinho.category.controller.*',
+				'br.com.aromasabor.mercadinho.product.controller.*',
+				'br.com.aromasabor.mercadinho.product.dto.*',
+				'br.com.aromasabor.mercadinho.product.entity.*',
+				'br.com.aromasabor.mercadinho.product.exception.*',
+				'br.com.aromasabor.mercadinho.product.repository.*'
+			]
+			limit {
+				minimum = 0.80
+			}
+		}
+	}
+}
+
+tasks.named('check') {
+	dependsOn(tasks.named('jacocoTestCoverageVerification'))
 }
