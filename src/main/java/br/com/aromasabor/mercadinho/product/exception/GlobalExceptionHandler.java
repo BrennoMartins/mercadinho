@@ -1,5 +1,8 @@
 package br.com.aromasabor.mercadinho.product.exception;
 
+import br.com.aromasabor.mercadinho.sale.exception.ProductOutOfStockException;
+import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
+import br.com.aromasabor.mercadinho.sale.exception.SaleWithoutItemsException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -33,6 +36,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ProductNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleProductNotFound(ProductNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SaleNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleSaleNotFound(SaleNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ProductOutOfStockException.class)
+    public ResponseEntity<Map<String, String>> handleProductOutOfStock(ProductOutOfStockException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SaleWithoutItemsException.class)
+    public ResponseEntity<Map<String, String>> handleSaleWithoutItems(SaleWithoutItemsException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("message", ex.getMessage()));
     }
 
