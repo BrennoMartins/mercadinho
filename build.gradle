@@ -57,7 +57,8 @@ tasks.named('jacocoTestCoverageVerification') {
 			element = 'PACKAGE'
 			includes = [
 				'br.com.aromasabor.mercadinho.category.service.*',
-				'br.com.aromasabor.mercadinho.product.service.*'
+				'br.com.aromasabor.mercadinho.product.service.*',
+				'br.com.aromasabor.mercadinho.turn.service.*'
 			]
 			excludes = [
 				'br.com.aromasabor.mercadinho.MercadinhoApplication',
@@ -67,7 +68,12 @@ tasks.named('jacocoTestCoverageVerification') {
 				'br.com.aromasabor.mercadinho.product.dto.*',
 				'br.com.aromasabor.mercadinho.product.entity.*',
 				'br.com.aromasabor.mercadinho.product.exception.*',
-				'br.com.aromasabor.mercadinho.product.repository.*'
+				'br.com.aromasabor.mercadinho.product.repository.*',
+				'br.com.aromasabor.mercadinho.turn.controller.*',
+				'br.com.aromasabor.mercadinho.turn.dto.*',
+				'br.com.aromasabor.mercadinho.turn.entity.*',
+				'br.com.aromasabor.mercadinho.turn.exception.*',
+				'br.com.aromasabor.mercadinho.turn.repository.*'
 			]
 			limit {
 				minimum = 0.80
