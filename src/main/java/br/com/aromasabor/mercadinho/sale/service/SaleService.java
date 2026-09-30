@@ -10,11 +10,15 @@ import br.com.aromasabor.mercadinho.sale.dto.SaleResponseDTO;
 import br.com.aromasabor.mercadinho.sale.entity.SaleEntity;
 import br.com.aromasabor.mercadinho.sale.entity.SaleItemEntity;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.exception.MarketClosedException;
 import br.com.aromasabor.mercadinho.sale.exception.ProductOutOfStockException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleWithoutItemsException;
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
+import br.com.aromasabor.mercadinho.turn.entity.TurnEntity;
+import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
+import br.com.aromasabor.mercadinho.turn.repository.TurnRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -34,13 +38,16 @@ public class SaleService {
     private final SaleRepository saleRepository;
     private final ProductRepository productRepository;
     private final StockMovementRepository stockMovementRepository;
+    private final TurnRepository turnRepository;
 
     public SaleService(SaleRepository saleRepository,
                        ProductRepository productRepository,
-                       StockMovementRepository stockMovementRepository) {
+                       StockMovementRepository stockMovementRepository,
+                       TurnRepository turnRepository) {
         this.saleRepository = saleRepository;
         this.productRepository = productRepository;
         this.stockMovementRepository = stockMovementRepository;
+        this.turnRepository = turnRepository;
     }
 
     @Transactional
@@ -63,11 +70,15 @@ public class SaleService {
         }
 
         LocalDateTime now = LocalDateTime.now();
+        TurnEntity openTurn = turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)
+                .orElseThrow(() -> new MarketClosedException(
+                        "Não é possível registrar a venda porque o mercado está fechado."));
 
         SaleEntity sale = SaleEntity.builder()
                 .status(SALE_STATUS_COMPLETED)
                 .total(BigDecimal.ZERO)
                 .createdAt(now)
+                .turn(openTurn)
                 .build();
 
         BigDecimal total = BigDecimal.ZERO;

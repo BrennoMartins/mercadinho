@@ -1,6 +1,7 @@
 package br.com.aromasabor.mercadinho.product.exception;
 
 import br.com.aromasabor.mercadinho.sale.exception.ProductOutOfStockException;
+import br.com.aromasabor.mercadinho.sale.exception.MarketClosedException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleWithoutItemsException;
 import br.com.aromasabor.mercadinho.turn.exception.NoOpenTurnException;
@@ -56,6 +57,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(SaleWithoutItemsException.class)
     public ResponseEntity<Map<String, String>> handleSaleWithoutItems(SaleWithoutItemsException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(MarketClosedException.class)
+    public ResponseEntity<Map<String, String>> handleMarketClosed(MarketClosedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("message", ex.getMessage()));
     }
 
