@@ -4,6 +4,7 @@ import br.com.aromasabor.mercadinho.turn.dto.CloseTurnRequest;
 import br.com.aromasabor.mercadinho.turn.dto.CloseTurnResponse;
 import br.com.aromasabor.mercadinho.turn.dto.OpenTurnRequest;
 import br.com.aromasabor.mercadinho.turn.dto.TurnResponse;
+import br.com.aromasabor.mercadinho.turn.dto.TurnSummaryResponse;
 import br.com.aromasabor.mercadinho.turn.service.TurnService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -62,5 +63,12 @@ public class TurnController {
     public List<TurnResponse> findAll() {
         return turnService.findAll();
     }
-}
 
+    @GetMapping("/{id}/summary")
+    @Operation(summary = "Get turn summary")
+    @ApiResponse(responseCode = "200", description = "Turn summary returned successfully")
+    @ApiResponse(responseCode = "404", description = "Turn not found")
+    public TurnSummaryResponse getSummary(@PathVariable UUID id) {
+        return turnService.getSummary(id);
+    }
+}

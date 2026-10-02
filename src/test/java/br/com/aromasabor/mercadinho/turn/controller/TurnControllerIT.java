@@ -14,12 +14,16 @@ import br.com.aromasabor.mercadinho.turn.dto.CloseTurnRequest;
 import br.com.aromasabor.mercadinho.turn.dto.CloseTurnResponse;
 import br.com.aromasabor.mercadinho.turn.dto.OpenTurnRequest;
 import br.com.aromasabor.mercadinho.turn.dto.TurnResponse;
+import br.com.aromasabor.mercadinho.turn.dto.TurnSummaryResponse;
+import br.com.aromasabor.mercadinho.turn.dto.TopSellingProductResponse;
 import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
 import br.com.aromasabor.mercadinho.turn.exception.NoOpenTurnException;
 import br.com.aromasabor.mercadinho.turn.exception.TurnAlreadyOpenException;
+import br.com.aromasabor.mercadinho.turn.exception.TurnNotFoundException;
 import br.com.aromasabor.mercadinho.turn.service.TurnService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -159,5 +163,43 @@ class TurnControllerIT {
                 .andExpect(jsonPath("$[0].id").value(turnId.toString()))
                 .andExpect(jsonPath("$[0].status").value("CLOSED"));
     }
-}
 
+    @Test
+    void shouldReturnTurnSummary() throws Exception {
+        UUID turnId = UUID.randomUUID();
+        TurnSummaryResponse response = new TurnSummaryResponse(
+                turnId,
+                TurnStatus.CLOSED,
+                LocalDateTime.now().minusHours(2),
+                LocalDateTime.now(),
+                120L,
+                2L,
+                new BigDecimal("85.05"),
+                new BigDecimal("42.53"),
+                List.of(new TopSellingProductResponse(1L, "Arroz", 5L, new BigDecimal("50.00"))),
+                3L
+        );
+        when(turnService.getSummary(turnId)).thenReturn(response);
+
+        mockMvc.perform(get("/api/turns/{id}/summary", turnId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.turnId").value(turnId.toString()))
+                .andExpect(jsonPath("$.durationInMinutes").value(120))
+                .andExpect(jsonPath("$.salesCount").value(2))
+                .andExpect(jsonPath("$.totalRevenue").value(85.05))
+                .andExpect(jsonPath("$.averageTicket").value(42.53))
+                .andExpect(jsonPath("$.topProducts[0].productName").value("Arroz"))
+                .andExpect(jsonPath("$.lowStockProductCount").value(3));
+    }
+
+    @Test
+    void shouldReturn404WhenTurnForSummaryDoesNotExist() throws Exception {
+        UUID turnId = UUID.randomUUID();
+        when(turnService.getSummary(turnId))
+                .thenThrow(new TurnNotFoundException("Turn not found with id: " + turnId));
+
+        mockMvc.perform(get("/api/turns/{id}/summary", turnId))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Turn not found with id: " + turnId));
+    }
+}

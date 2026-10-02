@@ -6,6 +6,7 @@ import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleWithoutItemsException;
 import br.com.aromasabor.mercadinho.turn.exception.NoOpenTurnException;
 import br.com.aromasabor.mercadinho.turn.exception.TurnAlreadyOpenException;
+import br.com.aromasabor.mercadinho.turn.exception.TurnNotFoundException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -74,6 +75,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(NoOpenTurnException.class)
     public ResponseEntity<Map<String, String>> handleNoOpenTurn(NoOpenTurnException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TurnNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleTurnNotFound(TurnNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("message", ex.getMessage()));
     }
