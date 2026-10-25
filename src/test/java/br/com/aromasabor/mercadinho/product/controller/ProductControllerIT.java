@@ -13,9 +13,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.GlobalExceptionHandler;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.service.ProductService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -235,5 +237,55 @@ class ProductControllerIT {
     void shouldDeleteProduct() throws Exception {
         mockMvc.perform(delete("/api/products/1"))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void shouldReplenishProductStock() throws Exception {
+        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(5, "Fornecedor XPTO");
+
+        ProductResponseDTO response = new ProductResponseDTO();
+        response.setId(1L);
+        response.setBarcode("7894900011517");
+        response.setName("Coca-Cola 2L");
+        response.setPrice(new BigDecimal("10.50"));
+        response.setStock(30);
+        response.setActive(true);
+        response.setCreatedAt(LocalDateTime.now());
+        response.setUpdatedAt(LocalDateTime.now());
+
+        when(productService.replenishStock(anyLong(), any(StockReplenishmentRequestDTO.class))).thenReturn(response);
+
+        mockMvc.perform(post("/api/products/1/replenishments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.stock").value(30));
+    }
+
+    @Test
+    void shouldRejectReplenishmentWithInvalidQuantity() throws Exception {
+        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(0, "Fornecedor XPTO");
+
+        mockMvc.perform(post("/api/products/1/replenishments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Erro de validação."))
+                .andExpect(jsonPath("$.errors.quantity").value("deve ser maior que zero"));
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenReplenishingInexistentProduct() throws Exception {
+        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(3, "Fornecedor XPTO");
+
+        when(productService.replenishStock(anyLong(), any(StockReplenishmentRequestDTO.class)))
+                .thenThrow(new ProductNotFoundException("Product not found with id: 99"));
+
+        mockMvc.perform(post("/api/products/99/replenishments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Product not found with id: 99"));
     }
 }

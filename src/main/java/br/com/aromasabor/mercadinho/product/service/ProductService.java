@@ -3,6 +3,7 @@ package br.com.aromasabor.mercadinho.product.service;
 import br.com.aromasabor.mercadinho.product.dto.CategoryResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
@@ -10,6 +11,8 @@ import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsExcept
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
+import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -19,12 +22,18 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ProductService {
 
+    private static final String MOVEMENT_TYPE_ENTRY = "ENTRY";
+
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final StockMovementRepository stockMovementRepository;
 
-    public ProductService(ProductRepository productRepository, CategoryRepository categoryRepository) {
+    public ProductService(ProductRepository productRepository,
+                          CategoryRepository categoryRepository,
+                          StockMovementRepository stockMovementRepository) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
+        this.stockMovementRepository = stockMovementRepository;
     }
 
     @Transactional
@@ -123,6 +132,32 @@ public class ProductService {
         product.setActive(false);
         product.setUpdatedAt(LocalDateTime.now());
         productRepository.save(product);
+    }
+
+    @Transactional
+    public ProductResponseDTO replenishStock(Long id, StockReplenishmentRequestDTO request) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        if (!Boolean.TRUE.equals(product.getActive())) {
+            throw new ProductNotFoundException("Product not found with id: " + id);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        product.setStock(product.getStock() + request.getQuantity());
+        product.setUpdatedAt(now);
+
+        StockMovementEntity movement = StockMovementEntity.builder()
+                .product(product)
+                .movementType(MOVEMENT_TYPE_ENTRY)
+                .quantity(request.getQuantity())
+                .referenceSale(null)
+                .reason(request.getReason())
+                .createdAt(now)
+                .build();
+
+        stockMovementRepository.save(movement);
+        return toResponse(productRepository.save(product));
     }
 
     private void validateBarcodeAvailability(String barcode, Long excludedProductId) {

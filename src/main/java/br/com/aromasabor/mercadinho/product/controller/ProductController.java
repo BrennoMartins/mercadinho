@@ -2,6 +2,7 @@ package br.com.aromasabor.mercadinho.product.controller;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -89,5 +90,15 @@ public class ProductController {
     @ApiResponse(responseCode = "404", description = "Produto não encontrado")
     public void delete(@PathVariable Long id) {
         productService.delete(id);
+    }
+
+    @PostMapping("/{id}/replenishments")
+    @Operation(summary = "Registrar reposição de estoque")
+    @ApiResponse(responseCode = "200", description = "Estoque atualizado com sucesso")
+    @ApiResponse(responseCode = "400", description = "Dados inválidos")
+    @ApiResponse(responseCode = "404", description = "Produto não encontrado")
+    public ProductResponseDTO replenishStock(@PathVariable Long id,
+                                             @Valid @RequestBody StockReplenishmentRequestDTO request) {
+        return productService.replenishStock(id, request);
     }
 }

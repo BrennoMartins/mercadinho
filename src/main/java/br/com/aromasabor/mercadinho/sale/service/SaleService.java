@@ -58,7 +58,7 @@ public class SaleService {
                 .map(SaleItemRequestDTO::getProductId)
                 .collect(Collectors.toSet());
 
-        Map<Long, ProductEntity> productsById = productRepository.findAllById(productIds).stream()
+        Map<Long, ProductEntity> productsById = productRepository.findAllByIdInForUpdate(productIds).stream()
                 .collect(Collectors.toMap(ProductEntity::getId, product -> product, (left, right) -> left, LinkedHashMap::new));
 
         if (productsById.size() != productIds.size()) {

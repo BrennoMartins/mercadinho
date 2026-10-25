@@ -9,12 +9,16 @@ import static org.mockito.Mockito.when;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
+import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -32,6 +36,9 @@ class ProductServiceTest {
 
     @Mock
     private CategoryRepository categoryRepository;
+
+    @Mock
+    private StockMovementRepository stockMovementRepository;
 
     @InjectMocks
     private ProductService productService;
@@ -105,6 +112,69 @@ class ProductServiceTest {
         assertThatThrownBy(() -> productService.create(request))
                 .isInstanceOf(CategoryNotFoundException.class)
                 .hasMessageContaining("99");
+
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldReplenishStockAndCreateEntryMovement() {
+        ProductEntity product = ProductEntity.builder()
+                .id(10L)
+                .barcode("78910")
+                .name("Arroz")
+                .price(new BigDecimal("10.00"))
+                .stock(5)
+                .active(true)
+                .createdAt(LocalDateTime.now().minusDays(1))
+                .updatedAt(LocalDateTime.now().minusDays(1))
+                .build();
+
+        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(4, "Compra fornecedor");
+
+        when(productRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(productRepository.save(any(ProductEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProductResponseDTO response = productService.replenishStock(10L, request);
+
+        assertThat(response.getStock()).isEqualTo(9);
+
+        verify(stockMovementRepository).save(any(StockMovementEntity.class));
+        verify(productRepository).save(product);
+    }
+
+    @Test
+    void shouldRejectReplenishmentWhenProductDoesNotExist() {
+        when(productRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> productService.replenishStock(99L, new StockReplenishmentRequestDTO(2, null)))
+                .isInstanceOf(ProductNotFoundException.class)
+                .hasMessageContaining("99");
+
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldRollbackWhenStockMovementPersistenceFails() {
+        ProductEntity product = ProductEntity.builder()
+                .id(11L)
+                .barcode("78911")
+                .name("Feijao")
+                .price(new BigDecimal("8.00"))
+                .stock(7)
+                .active(true)
+                .createdAt(LocalDateTime.now().minusDays(1))
+                .updatedAt(LocalDateTime.now().minusDays(1))
+                .build();
+
+        when(productRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class)))
+                .thenThrow(new RuntimeException("boom"));
+
+        assertThatThrownBy(() -> productService.replenishStock(11L, new StockReplenishmentRequestDTO(3, "NF 123")))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("boom");
 
         verify(productRepository, never()).save(any(ProductEntity.class));
     }
