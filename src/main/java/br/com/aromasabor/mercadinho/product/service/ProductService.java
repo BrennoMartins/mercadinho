@@ -3,12 +3,14 @@ package br.com.aromasabor.mercadinho.product.service;
 import br.com.aromasabor.mercadinho.product.dto.CategoryResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
@@ -23,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductService {
 
     private static final String MOVEMENT_TYPE_ENTRY = "ENTRY";
+    private static final String MOVEMENT_TYPE_ADJUSTMENT = "ADJUSTMENT";
 
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
@@ -153,6 +156,35 @@ public class ProductService {
                 .quantity(request.getQuantity())
                 .referenceSale(null)
                 .reason(request.getReason())
+                .createdAt(now)
+                .build();
+
+        stockMovementRepository.save(movement);
+        return toResponse(productRepository.save(product));
+    }
+
+    @Transactional
+    public ProductResponseDTO adjustStock(Long id, StockAdjustmentRequestDTO request) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .filter(ProductEntity::getActive)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        int quantityDifference = request.getQuantityOnHand() - product.getStock();
+        if (quantityDifference == 0) {
+            throw new StockAdjustmentNotNeededException(
+                    "A quantidade informada é igual ao estoque atual; nenhum ajuste foi registrado.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        product.setStock(request.getQuantityOnHand());
+        product.setUpdatedAt(now);
+
+        StockMovementEntity movement = StockMovementEntity.builder()
+                .product(product)
+                .movementType(MOVEMENT_TYPE_ADJUSTMENT)
+                .quantity(quantityDifference)
+                .referenceSale(null)
+                .reason(request.getReason().trim())
                 .createdAt(now)
                 .build();
 

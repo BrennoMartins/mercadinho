@@ -9,12 +9,14 @@ import static org.mockito.Mockito.when;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
@@ -24,6 +26,7 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -178,5 +181,97 @@ class ProductServiceTest {
 
         verify(productRepository, never()).save(any(ProductEntity.class));
     }
-}
 
+    @Test
+    void shouldAdjustStockUpAndPersistPositiveDifferenceAndReason() {
+        ProductEntity product = ProductEntity.builder()
+                .id(12L)
+                .name("Arroz")
+                .stock(10)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(product));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.adjustStock(
+                12L, new StockAdjustmentRequestDTO(17, "Contagem física"));
+
+        ArgumentCaptor<StockMovementEntity> movementCaptor = ArgumentCaptor.forClass(StockMovementEntity.class);
+        verify(stockMovementRepository).save(movementCaptor.capture());
+        assertThat(response.getStock()).isEqualTo(17);
+        assertThat(product.getStock()).isEqualTo(17);
+        assertThat(movementCaptor.getValue().getMovementType()).isEqualTo("ADJUSTMENT");
+        assertThat(movementCaptor.getValue().getQuantity()).isEqualTo(7);
+        assertThat(movementCaptor.getValue().getReason()).isEqualTo("Contagem física");
+        verify(productRepository).save(product);
+    }
+
+    @Test
+    void shouldAdjustStockDownAndPersistNegativeDifference() {
+        ProductEntity product = ProductEntity.builder()
+                .id(13L)
+                .name("Feijão")
+                .stock(20)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(13L)).thenReturn(Optional.of(product));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.adjustStock(
+                13L, new StockAdjustmentRequestDTO(17, "Perda identificada"));
+
+        ArgumentCaptor<StockMovementEntity> movementCaptor = ArgumentCaptor.forClass(StockMovementEntity.class);
+        verify(stockMovementRepository).save(movementCaptor.capture());
+        assertThat(response.getStock()).isEqualTo(17);
+        assertThat(movementCaptor.getValue().getQuantity()).isEqualTo(-3);
+        assertThat(movementCaptor.getValue().getReason()).isEqualTo("Perda identificada");
+    }
+
+    @Test
+    void shouldRejectAdjustmentWithoutStockDifference() {
+        ProductEntity product = ProductEntity.builder()
+                .id(14L)
+                .stock(10)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(14L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> productService.adjustStock(
+                14L, new StockAdjustmentRequestDTO(10, "Contagem física")))
+                .isInstanceOf(StockAdjustmentNotNeededException.class);
+
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldRejectAdjustmentForMissingProduct() {
+        when(productRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> productService.adjustStock(
+                99L, new StockAdjustmentRequestDTO(5, "Contagem física")))
+                .isInstanceOf(ProductNotFoundException.class)
+                .hasMessageContaining("99");
+
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+    }
+
+    @Test
+    void shouldNotSaveProductWhenAdjustmentMovementPersistenceFails() {
+        ProductEntity product = ProductEntity.builder()
+                .id(15L)
+                .stock(10)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(15L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class)))
+                .thenThrow(new RuntimeException("boom"));
+
+        assertThatThrownBy(() -> productService.adjustStock(
+                15L, new StockAdjustmentRequestDTO(8, "Contagem física")))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("boom");
+
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+}

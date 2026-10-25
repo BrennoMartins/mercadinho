@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.GlobalExceptionHandler;
@@ -285,6 +286,51 @@ class ProductControllerIT {
         mockMvc.perform(post("/api/products/99/replenishments")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Product not found with id: 99"));
+    }
+
+    @Test
+    void shouldAdjustStockToPhysicalCount() throws Exception {
+        ProductResponseDTO response = new ProductResponseDTO();
+        response.setId(1L);
+        response.setName("Coca-Cola 2L");
+        response.setStock(17);
+        when(productService.adjustStock(anyLong(), any(StockAdjustmentRequestDTO.class))).thenReturn(response);
+
+        mockMvc.perform(post("/api/products/1/stock-adjustments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantityOnHand\":17,\"reason\":\"Contagem física\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stock").value(17));
+    }
+
+    @Test
+    void shouldRejectInvalidStockAdjustmentRequest() throws Exception {
+        mockMvc.perform(post("/api/products/1/stock-adjustments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantityOnHand\":-1,\"reason\":\"   \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Erro de validação."))
+                .andExpect(jsonPath("$.errors.quantityOnHand").value("deve ser maior ou igual a zero"))
+                .andExpect(jsonPath("$.errors.reason").value("não pode estar vazio"));
+
+        mockMvc.perform(post("/api/products/1/stock-adjustments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantityOnHand\":1,\"reason\":\""
+                                + "a".repeat(256) + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.reason").value("deve ter no máximo 255 caracteres"));
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenAdjustingInexistentProduct() throws Exception {
+        when(productService.adjustStock(anyLong(), any(StockAdjustmentRequestDTO.class)))
+                .thenThrow(new ProductNotFoundException("Product not found with id: 99"));
+
+        mockMvc.perform(post("/api/products/99/stock-adjustments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantityOnHand\":3,\"reason\":\"Contagem física\"}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value("Product not found with id: 99"));
     }

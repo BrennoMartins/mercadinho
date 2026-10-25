@@ -2,6 +2,7 @@ package br.com.aromasabor.mercadinho.product.controller;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -100,5 +101,19 @@ public class ProductController {
     public ProductResponseDTO replenishStock(@PathVariable Long id,
                                              @Valid @RequestBody StockReplenishmentRequestDTO request) {
         return productService.replenishStock(id, request);
+    }
+
+    @PostMapping("/{id}/stock-adjustments")
+    @Operation(
+            summary = "Ajustar estoque à quantidade física contada",
+            description = "Registra a diferença entre o saldo atual e a quantidade física final informada, " +
+                    "junto com a justificativa. Ajustes sem diferença são rejeitados.")
+    @ApiResponse(responseCode = "200", description = "Estoque ajustado e movimentação registrada")
+    @ApiResponse(responseCode = "400", description = "Quantidade ou justificativa inválida")
+    @ApiResponse(responseCode = "404", description = "Produto não encontrado")
+    @ApiResponse(responseCode = "409", description = "Quantidade informada igual ao saldo atual")
+    public ProductResponseDTO adjustStock(@PathVariable Long id,
+                                          @Valid @RequestBody StockAdjustmentRequestDTO request) {
+        return productService.adjustStock(id, request);
     }
 }
