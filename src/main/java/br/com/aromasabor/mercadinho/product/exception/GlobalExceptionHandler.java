@@ -1,5 +1,14 @@
 package br.com.aromasabor.mercadinho.product.exception;
 
+import br.com.aromasabor.mercadinho.sale.exception.ProductOutOfStockException;
+import br.com.aromasabor.mercadinho.sale.exception.MarketClosedException;
+import br.com.aromasabor.mercadinho.sale.exception.InvalidStockMovementFilterException;
+import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
+import br.com.aromasabor.mercadinho.sale.exception.SaleWithoutItemsException;
+import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
+import br.com.aromasabor.mercadinho.turn.exception.NoOpenTurnException;
+import br.com.aromasabor.mercadinho.turn.exception.TurnAlreadyOpenException;
+import br.com.aromasabor.mercadinho.turn.exception.TurnNotFoundException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -18,6 +27,12 @@ public class GlobalExceptionHandler {
                 .body(Map.of("message", "Produto já cadastrado."));
     }
 
+    @ExceptionHandler(ProductAlreadyActiveException.class)
+    public ResponseEntity<Map<String, String>> handleProductAlreadyActive(ProductAlreadyActiveException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
     @ExceptionHandler(CategoryAlreadyExistsException.class)
     public ResponseEntity<Map<String, String>> handleCategoryAlreadyExists(CategoryAlreadyExistsException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
@@ -32,6 +47,62 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ProductNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleProductNotFound(ProductNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SaleNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleSaleNotFound(SaleNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ProductOutOfStockException.class)
+    public ResponseEntity<Map<String, String>> handleProductOutOfStock(ProductOutOfStockException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SaleWithoutItemsException.class)
+    public ResponseEntity<Map<String, String>> handleSaleWithoutItems(SaleWithoutItemsException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidStockMovementFilterException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidStockMovementFilter(
+            InvalidStockMovementFilterException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(StockAdjustmentNotNeededException.class)
+    public ResponseEntity<Map<String, String>> handleStockAdjustmentNotNeeded(
+            StockAdjustmentNotNeededException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(MarketClosedException.class)
+    public ResponseEntity<Map<String, String>> handleMarketClosed(MarketClosedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TurnAlreadyOpenException.class)
+    public ResponseEntity<Map<String, String>> handleTurnAlreadyOpen(TurnAlreadyOpenException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(NoOpenTurnException.class)
+    public ResponseEntity<Map<String, String>> handleNoOpenTurn(NoOpenTurnException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TurnNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleTurnNotFound(TurnNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("message", ex.getMessage()));
     }

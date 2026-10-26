@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.DynamicUpdate;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
@@ -19,6 +20,7 @@ import lombok.Setter;
 
 @Entity
 @Table(name = "products")
+@DynamicUpdate
 @Getter
 @Setter
 @NoArgsConstructor
@@ -56,4 +58,3 @@ public class ProductEntity {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 }
-

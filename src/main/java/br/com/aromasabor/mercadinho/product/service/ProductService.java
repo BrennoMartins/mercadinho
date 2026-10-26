@@ -1,15 +1,22 @@
 package br.com.aromasabor.mercadinho.product.service;
 
 import br.com.aromasabor.mercadinho.product.dto.CategoryResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
+import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -19,12 +26,19 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ProductService {
 
+    private static final String MOVEMENT_TYPE_ENTRY = "ENTRY";
+    private static final String MOVEMENT_TYPE_ADJUSTMENT = "ADJUSTMENT";
+
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final StockMovementRepository stockMovementRepository;
 
-    public ProductService(ProductRepository productRepository, CategoryRepository categoryRepository) {
+    public ProductService(ProductRepository productRepository,
+                          CategoryRepository categoryRepository,
+                          StockMovementRepository stockMovementRepository) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
+        this.stockMovementRepository = stockMovementRepository;
     }
 
     @Transactional
@@ -58,6 +72,13 @@ public class ProductService {
     }
 
     @Transactional(readOnly = true)
+    public List<ProductResponseDTO> findInactive() {
+        return productRepository.findByActiveFalseOrderByIdAsc().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public ProductResponseDTO findById(Long id) {
         ProductEntity product = productRepository.findById(id)
                 .filter(ProductEntity::getActive)
@@ -82,7 +103,7 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductResponseDTO update(Long id, ProductRequestDTO request) {
+    public ProductResponseDTO update(Long id, ProductUpdateRequestDTO request) {
         ProductEntity product = productRepository.findById(id)
                 .filter(ProductEntity::getActive)
                 .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
@@ -106,10 +127,6 @@ public class ProductService {
             product.setPrice(request.getPrice());
         }
 
-        if (request.getStock() != null) {
-            product.setStock(request.getStock());
-        }
-
         product.setUpdatedAt(LocalDateTime.now());
         return toResponse(productRepository.save(product));
     }
@@ -123,6 +140,82 @@ public class ProductService {
         product.setActive(false);
         product.setUpdatedAt(LocalDateTime.now());
         productRepository.save(product);
+    }
+
+    @Transactional
+    public ProductResponseDTO reactivate(Long id) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        if (Boolean.TRUE.equals(product.getActive())) {
+            throw new ProductAlreadyActiveException("Produto já está ativo.");
+        }
+
+        productRepository.findByBarcode(product.getBarcode())
+                .filter(existingProduct -> !existingProduct.getId().equals(id))
+                .ifPresent(existingProduct -> {
+                    throw new ProductAlreadyExistsException(
+                            "Product with barcode '" + product.getBarcode() + "' already exists.");
+                });
+
+        product.setActive(true);
+        product.setUpdatedAt(LocalDateTime.now());
+        return toResponse(productRepository.save(product));
+    }
+
+    @Transactional
+    public ProductResponseDTO replenishStock(Long id, StockReplenishmentRequestDTO request) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        if (!Boolean.TRUE.equals(product.getActive())) {
+            throw new ProductNotFoundException("Product not found with id: " + id);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        product.setStock(product.getStock() + request.getQuantity());
+        product.setUpdatedAt(now);
+
+        StockMovementEntity movement = StockMovementEntity.builder()
+                .product(product)
+                .movementType(MOVEMENT_TYPE_ENTRY)
+                .quantity(request.getQuantity())
+                .referenceSale(null)
+                .reason(request.getReason())
+                .createdAt(now)
+                .build();
+
+        stockMovementRepository.save(movement);
+        return toResponse(productRepository.save(product));
+    }
+
+    @Transactional
+    public ProductResponseDTO adjustStock(Long id, StockAdjustmentRequestDTO request) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .filter(ProductEntity::getActive)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        int quantityDifference = request.getQuantityOnHand() - product.getStock();
+        if (quantityDifference == 0) {
+            throw new StockAdjustmentNotNeededException(
+                    "A quantidade informada é igual ao estoque atual; nenhum ajuste foi registrado.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        product.setStock(request.getQuantityOnHand());
+        product.setUpdatedAt(now);
+
+        StockMovementEntity movement = StockMovementEntity.builder()
+                .product(product)
+                .movementType(MOVEMENT_TYPE_ADJUSTMENT)
+                .quantity(quantityDifference)
+                .referenceSale(null)
+                .reason(request.getReason().trim())
+                .createdAt(now)
+                .build();
+
+        stockMovementRepository.save(movement);
+        return toResponse(productRepository.save(product));
     }
 
     private void validateBarcodeAvailability(String barcode, Long excludedProductId) {
