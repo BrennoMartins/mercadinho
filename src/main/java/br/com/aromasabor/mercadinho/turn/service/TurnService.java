@@ -7,6 +7,7 @@ import br.com.aromasabor.mercadinho.turn.dto.TopSellingProductResponse;
 import br.com.aromasabor.mercadinho.turn.dto.TurnResponse;
 import br.com.aromasabor.mercadinho.turn.dto.TurnSummaryResponse;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
+import br.com.aromasabor.mercadinho.product.service.ProductStockPolicy;
 import br.com.aromasabor.mercadinho.sale.repository.SaleItemRepository;
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.projection.TopSellingProductProjection;
@@ -31,7 +32,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class TurnService {
 
-    private static final int LOW_STOCK_THRESHOLD = 5;
     private static final int TOP_PRODUCTS_LIMIT = 5;
     private static final BigDecimal ZERO_MONEY = new BigDecimal("0.00");
 
@@ -133,7 +133,7 @@ public class TurnService {
         response.setAverageTicket(calculateAverageTicket(totalRevenue, salesCount));
         response.setTopProducts(topProducts);
         response.setLowStockProductCount(productRepository
-                .countByActiveTrueAndStockLessThanEqual(LOW_STOCK_THRESHOLD));
+                .countByActiveTrueAndStockLessThanEqual(ProductStockPolicy.LOW_STOCK_THRESHOLD));
         return response;
     }
 

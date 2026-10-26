@@ -1,6 +1,7 @@
 package br.com.aromasabor.mercadinho.product.repository;
 
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
+import br.com.aromasabor.mercadinho.product.repository.projection.LowStockProductProjection;
 import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
@@ -21,6 +22,18 @@ public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
     List<ProductEntity> findByActiveFalseOrderByIdAsc();
 
     List<ProductEntity> findByNameContainingIgnoreCase(String name);
+
+    @Query("""
+            select p.id as id,
+                   p.name as name,
+                   p.barcode as barcode,
+                   p.stock as stock
+            from ProductEntity p
+            where p.active = true
+              and p.stock <= :stockThreshold
+            order by p.stock asc, p.name asc, p.id asc
+            """)
+    List<LowStockProductProjection> findLowStockProducts(@Param("stockThreshold") Integer stockThreshold);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
