@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -19,6 +20,7 @@ import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import br.com.aromasabor.mercadinho.turn.entity.TurnEntity;
 import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
 import br.com.aromasabor.mercadinho.turn.repository.TurnRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -33,6 +35,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -49,6 +53,8 @@ class StockMovementControllerDbIT {
     @Autowired
     private WebApplicationContext webApplicationContext;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
@@ -57,6 +63,9 @@ class StockMovementControllerDbIT {
 
     @Autowired
     private ProductService productService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private CategoryRepository categoryRepository;
@@ -115,6 +124,80 @@ class StockMovementControllerDbIT {
                 .andExpect(jsonPath("$.content[1].reason").value("Venda #1"))
                 .andExpect(jsonPath("$.content[1].referenceSaleId").value(1))
                 .andExpect(jsonPath("$.content[0].createdAt").exists());
+    }
+
+    @Test
+    void shouldPreserveStockAndSaleHistoryAcrossReplenishmentSaleCatalogEditAndAdjustment() throws Exception {
+        ProductEntity product = createProduct("789000000111", "Biscoito");
+        openTurn();
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/replenishments")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":5,\"reason\":\"Compra semanal\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stock").value(15));
+
+        var saleResult = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + product.getId() + ",\"quantity\":3}]}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long saleId = objectMapper
+                .readTree(saleResult.getResponse().getContentAsString())
+                .get("id")
+                .asLong();
+
+        mockMvc.perform(put("/api/products/" + product.getId())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000111",
+                                  "name": "Biscoito integral",
+                                  "categoryId": 1,
+                                  "price": 12.50
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stock").value(12));
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/stock-adjustments")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantityOnHand\":8,\"reason\":\"Contagem final\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stock").value(8));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId())).isEqualTo(8);
+        assertThat(jdbcTemplate.queryForObject(
+                "select unit_price from sale_items where sale_id = ?", BigDecimal.class, saleId))
+                .isEqualByComparingTo("10.00");
+        assertThat(jdbcTemplate.queryForObject(
+                "select subtotal from sale_items where sale_id = ?", BigDecimal.class, saleId))
+                .isEqualByComparingTo("30.00");
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_movements where product_id = ?", Integer.class, product.getId()))
+                .isEqualTo(3);
+
+        mockMvc.perform(get("/api/stock-movements")
+                        .param("productId", product.getId().toString())
+                        .param("movementType", "ENTRY"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].quantity").value(5));
+        mockMvc.perform(get("/api/stock-movements")
+                        .param("productId", product.getId().toString())
+                        .param("movementType", "SALE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].quantity").value(-3))
+                .andExpect(jsonPath("$.content[0].referenceSaleId").value(saleId));
+        mockMvc.perform(get("/api/stock-movements")
+                        .param("productId", product.getId().toString())
+                        .param("movementType", "ADJUSTMENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].quantity").value(-4))
+                .andExpect(jsonPath("$.content[0].reason").value("Contagem final"));
     }
 
     @Test
@@ -320,6 +403,63 @@ class StockMovementControllerDbIT {
                 "select count(*) from stock_movements where product_id = ?",
                 Integer.class,
                 product.getId())).isEqualTo(2);
+    }
+
+    @Test
+    void shouldIgnoreUnexpectedStockOnCatalogUpdateWithoutCreatingMovement() throws Exception {
+        ProductEntity product = createProduct("789000000109", "Biscoito");
+
+        mockMvc.perform(put("/api/products/" + product.getId())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000109",
+                                  "name": "Biscoito integral",
+                                  "categoryId": 1,
+                                  "price": 12.50,
+                                  "stock": 999
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Biscoito integral"))
+                .andExpect(jsonPath("$.stock").value(10));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId()))
+                .isEqualTo(10);
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_movements where product_id = ?",
+                Integer.class,
+                product.getId())).isZero();
+    }
+
+    @Test
+    void shouldNotOverwriteStockChangedAfterProductWasLoadedForCatalogUpdate() throws Exception {
+        ProductEntity product = createProduct("789000000110", "Suco");
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            ProductEntity loadedProduct = productRepository.findById(product.getId()).orElseThrow();
+            try (var executor = Executors.newSingleThreadExecutor()) {
+                try {
+                    executor.submit(() -> jdbcTemplate.update(
+                            "update products set stock = ? where id = ?", 15, product.getId()))
+                            .get(10, TimeUnit.SECONDS);
+                } catch (Exception exception) {
+                    throw new IllegalStateException("Could not apply concurrent stock update", exception);
+                }
+            }
+
+            loadedProduct.setName("Suco atualizado");
+            loadedProduct.setUpdatedAt(LocalDateTime.now());
+            productRepository.save(loadedProduct);
+        });
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId()))
+                .isEqualTo(15);
+        assertThat(jdbcTemplate.queryForObject(
+                "select name from products where id = ?", String.class, product.getId()))
+                .isEqualTo("Suco atualizado");
     }
 
     private ProductEntity createProduct(String barcode, String name) {

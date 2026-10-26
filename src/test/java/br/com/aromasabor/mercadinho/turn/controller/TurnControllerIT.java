@@ -188,6 +188,7 @@ class TurnControllerIT {
                 .andExpect(jsonPath("$.salesCount").value(2))
                 .andExpect(jsonPath("$.totalRevenue").value(85.05))
                 .andExpect(jsonPath("$.averageTicket").value(42.53))
+                .andExpect(jsonPath("$.topProducts[0].productId").value(1))
                 .andExpect(jsonPath("$.topProducts[0].productName").value("Arroz"))
                 .andExpect(jsonPath("$.lowStockProductCount").value(3));
     }

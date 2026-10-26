@@ -81,7 +81,7 @@ public class TurnService {
 
     @Transactional
     public CloseTurnResponse close(UUID id, CloseTurnRequest request) {
-        TurnEntity turn = turnRepository.findByIdAndStatus(id, TurnStatus.OPEN)
+        TurnEntity turn = turnRepository.findByIdAndStatusForUpdate(id, TurnStatus.OPEN)
                 .orElseThrow(() -> new NoOpenTurnException("No open turn found with id: " + id));
 
         LocalDateTime closedAt = LocalDateTime.now();

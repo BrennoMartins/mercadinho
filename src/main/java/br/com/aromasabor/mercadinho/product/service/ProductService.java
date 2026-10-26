@@ -1,6 +1,7 @@
 package br.com.aromasabor.mercadinho.product.service;
 
 import br.com.aromasabor.mercadinho.product.dto.CategoryResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
@@ -9,6 +10,7 @@ import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
@@ -70,6 +72,13 @@ public class ProductService {
     }
 
     @Transactional(readOnly = true)
+    public List<ProductResponseDTO> findInactive() {
+        return productRepository.findByActiveFalseOrderByIdAsc().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public ProductResponseDTO findById(Long id) {
         ProductEntity product = productRepository.findById(id)
                 .filter(ProductEntity::getActive)
@@ -94,7 +103,7 @@ public class ProductService {
     }
 
     @Transactional
-    public ProductResponseDTO update(Long id, ProductRequestDTO request) {
+    public ProductResponseDTO update(Long id, ProductUpdateRequestDTO request) {
         ProductEntity product = productRepository.findById(id)
                 .filter(ProductEntity::getActive)
                 .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
@@ -118,10 +127,6 @@ public class ProductService {
             product.setPrice(request.getPrice());
         }
 
-        if (request.getStock() != null) {
-            product.setStock(request.getStock());
-        }
-
         product.setUpdatedAt(LocalDateTime.now());
         return toResponse(productRepository.save(product));
     }
@@ -135,6 +140,27 @@ public class ProductService {
         product.setActive(false);
         product.setUpdatedAt(LocalDateTime.now());
         productRepository.save(product);
+    }
+
+    @Transactional
+    public ProductResponseDTO reactivate(Long id) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        if (Boolean.TRUE.equals(product.getActive())) {
+            throw new ProductAlreadyActiveException("Produto já está ativo.");
+        }
+
+        productRepository.findByBarcode(product.getBarcode())
+                .filter(existingProduct -> !existingProduct.getId().equals(id))
+                .ifPresent(existingProduct -> {
+                    throw new ProductAlreadyExistsException(
+                            "Product with barcode '" + product.getBarcode() + "' already exists.");
+                });
+
+        product.setActive(true);
+        product.setUpdatedAt(LocalDateTime.now());
+        return toResponse(productRepository.save(product));
     }
 
     @Transactional

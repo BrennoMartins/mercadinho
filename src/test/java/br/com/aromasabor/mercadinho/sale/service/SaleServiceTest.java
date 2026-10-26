@@ -56,8 +56,8 @@ class SaleServiceTest {
         ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
         SaleRequestDTO request = new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 2)));
 
-        when(productRepository.findAllById(any())).thenReturn(List.of(rice));
-        when(turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
         when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> {
             SaleEntity sale = invocation.getArgument(0);
             sale.setId(100L);
@@ -78,8 +78,8 @@ class SaleServiceTest {
         ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
         SaleRequestDTO request = new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1)));
 
-        when(productRepository.findAllById(any())).thenReturn(List.of(rice));
-        when(turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
         when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         saleService.create(request);
@@ -96,8 +96,8 @@ class SaleServiceTest {
         ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
         SaleRequestDTO request = new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1)));
 
-        when(productRepository.findAllById(any())).thenReturn(List.of(rice));
-        when(turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)).thenReturn(Optional.empty());
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> saleService.create(request))
                 .isInstanceOf(MarketClosedException.class)
@@ -116,8 +116,8 @@ class SaleServiceTest {
                 new SaleItemRequestDTO(2L, 3)
         ));
 
-        when(productRepository.findAllById(any())).thenReturn(List.of(rice, beans));
-        when(turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice, beans));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
         when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> {
             SaleEntity sale = invocation.getArgument(0);
             sale.setId(101L);
@@ -138,8 +138,8 @@ class SaleServiceTest {
         ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
         SaleRequestDTO request = new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 2)));
 
-        when(productRepository.findAllById(any())).thenReturn(List.of(rice));
-        when(turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
         when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> {
             SaleEntity sale = invocation.getArgument(0);
             sale.setId(102L);
@@ -182,4 +182,3 @@ class SaleServiceTest {
                 .build();
     }
 }
-

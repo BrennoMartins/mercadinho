@@ -18,6 +18,8 @@ public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
 
     List<ProductEntity> findByActiveTrue();
 
+    List<ProductEntity> findByActiveFalseOrderByIdAsc();
+
     List<ProductEntity> findByNameContainingIgnoreCase(String name);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

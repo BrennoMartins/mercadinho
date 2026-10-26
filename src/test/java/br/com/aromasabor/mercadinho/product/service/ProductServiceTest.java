@@ -9,11 +9,13 @@ import static org.mockito.Mockito.when;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
+import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
@@ -23,6 +25,7 @@ import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
 import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -96,6 +99,120 @@ class ProductServiceTest {
         assertThatThrownBy(() -> productService.create(request))
                 .isInstanceOf(ProductAlreadyExistsException.class)
                 .hasMessageContaining("already exists");
+
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldListInactiveProductsInRepositoryOrder() {
+        ProductEntity inactiveProduct = ProductEntity.builder()
+                .id(3L)
+                .barcode("78913")
+                .name("Produto inativo")
+                .price(new BigDecimal("4.50"))
+                .stock(7)
+                .active(false)
+                .build();
+        ProductEntity earlierInactiveProduct = ProductEntity.builder()
+                .id(2L)
+                .barcode("78912")
+                .name("Outro produto inativo")
+                .price(new BigDecimal("3.50"))
+                .stock(4)
+                .active(false)
+                .build();
+        when(productRepository.findByActiveFalseOrderByIdAsc())
+                .thenReturn(List.of(earlierInactiveProduct, inactiveProduct));
+
+        List<ProductResponseDTO> response = productService.findInactive();
+
+        assertThat(response).extracting(ProductResponseDTO::getId).containsExactly(2L, 3L);
+        assertThat(response).allMatch(product -> Boolean.FALSE.equals(product.getActive()));
+        assertThat(response.getLast().getStock()).isEqualTo(7);
+        verify(productRepository).findByActiveFalseOrderByIdAsc();
+    }
+
+    @Test
+    void shouldReactivateProductWithoutChangingItsDataOrStockHistory() {
+        CategoryEntity category = CategoryEntity.builder()
+                .id(2L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now().minusDays(2))
+                .build();
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(3);
+        ProductEntity product = ProductEntity.builder()
+                .id(17L)
+                .barcode("78917")
+                .name("Suco")
+                .category(category)
+                .price(new BigDecimal("6.25"))
+                .stock(8)
+                .active(false)
+                .createdAt(createdAt)
+                .updatedAt(LocalDateTime.now().minusDays(1))
+                .build();
+
+        when(productRepository.findByIdForUpdate(17L)).thenReturn(Optional.of(product));
+        when(productRepository.findByBarcode("78917")).thenReturn(Optional.of(product));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.reactivate(17L);
+
+        assertThat(response.getActive()).isTrue();
+        assertThat(response.getStock()).isEqualTo(8);
+        assertThat(response.getBarcode()).isEqualTo("78917");
+        assertThat(response.getName()).isEqualTo("Suco");
+        assertThat(response.getCategory().getId()).isEqualTo(2L);
+        assertThat(response.getPrice()).isEqualByComparingTo("6.25");
+        assertThat(response.getCreatedAt()).isEqualTo(createdAt);
+        verify(productRepository).save(product);
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(stockMovementRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void shouldRejectReactivationWhenProductDoesNotExist() {
+        when(productRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> productService.reactivate(99L))
+                .isInstanceOf(ProductNotFoundException.class)
+                .hasMessageContaining("99");
+
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldRejectReactivationWhenProductIsAlreadyActive() {
+        ProductEntity product = ProductEntity.builder()
+                .id(18L)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(18L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> productService.reactivate(18L))
+                .isInstanceOf(ProductAlreadyActiveException.class)
+                .hasMessage("Produto já está ativo.");
+
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldRejectReactivationWhenBarcodeBelongsToAnotherProduct() {
+        ProductEntity inactiveProduct = ProductEntity.builder()
+                .id(19L)
+                .barcode("78919")
+                .active(false)
+                .build();
+        ProductEntity conflictingProduct = ProductEntity.builder()
+                .id(20L)
+                .barcode("78919")
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(19L)).thenReturn(Optional.of(inactiveProduct));
+        when(productRepository.findByBarcode("78919")).thenReturn(Optional.of(conflictingProduct));
+
+        assertThatThrownBy(() -> productService.reactivate(19L))
+                .isInstanceOf(ProductAlreadyExistsException.class);
 
         verify(productRepository, never()).save(any(ProductEntity.class));
     }
@@ -254,6 +371,41 @@ class ProductServiceTest {
                 .hasMessageContaining("99");
 
         verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+    }
+
+    @Test
+    void shouldUpdateProductDetailsWithoutChangingStockOrCreatingMovement() {
+        CategoryEntity category = CategoryEntity.builder()
+                .id(2L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now())
+                .build();
+        ProductEntity product = ProductEntity.builder()
+                .id(16L)
+                .barcode("78916")
+                .name("Café")
+                .category(category)
+                .price(new BigDecimal("10.00"))
+                .stock(12)
+                .active(true)
+                .createdAt(LocalDateTime.now().minusDays(1))
+                .updatedAt(LocalDateTime.now().minusDays(1))
+                .build();
+        ProductUpdateRequestDTO request = new ProductUpdateRequestDTO(
+                "78916", "Café especial", 2L, new BigDecimal("12.50"));
+
+        when(productRepository.findById(16L)).thenReturn(Optional.of(product));
+        when(categoryRepository.findById(2L)).thenReturn(Optional.of(category));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.update(16L, request);
+
+        assertThat(response.getName()).isEqualTo("Café especial");
+        assertThat(response.getPrice()).isEqualByComparingTo("12.50");
+        assertThat(response.getStock()).isEqualTo(12);
+        assertThat(product.getStock()).isEqualTo(12);
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(stockMovementRepository, never()).saveAll(any());
     }
 
     @Test

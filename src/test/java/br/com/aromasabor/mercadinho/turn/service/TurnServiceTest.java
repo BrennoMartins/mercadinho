@@ -92,7 +92,7 @@ class TurnServiceTest {
 
         CloseTurnRequest request = new CloseTurnRequest("Fechamento do dia.");
 
-        when(turnRepository.findByIdAndStatus(id, TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(turnRepository.findByIdAndStatusForUpdate(id, TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
         when(turnRepository.save(any(TurnEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         CloseTurnResponse response = turnService.close(id, request);
@@ -109,11 +109,10 @@ class TurnServiceTest {
         UUID id = UUID.randomUUID();
         CloseTurnRequest request = new CloseTurnRequest("Fechamento do dia.");
 
-        when(turnRepository.findByIdAndStatus(id, TurnStatus.OPEN)).thenReturn(Optional.empty());
+        when(turnRepository.findByIdAndStatusForUpdate(id, TurnStatus.OPEN)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> turnService.close(id, request))
                 .isInstanceOf(NoOpenTurnException.class)
                 .hasMessage("No open turn found with id: " + id);
     }
 }
-

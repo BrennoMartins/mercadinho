@@ -27,6 +27,12 @@ public class GlobalExceptionHandler {
                 .body(Map.of("message", "Produto já cadastrado."));
     }
 
+    @ExceptionHandler(ProductAlreadyActiveException.class)
+    public ResponseEntity<Map<String, String>> handleProductAlreadyActive(ProductAlreadyActiveException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
     @ExceptionHandler(CategoryAlreadyExistsException.class)
     public ResponseEntity<Map<String, String>> handleCategoryAlreadyExists(CategoryAlreadyExistsException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)

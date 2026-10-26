@@ -70,7 +70,7 @@ public class SaleService {
         }
 
         LocalDateTime now = LocalDateTime.now();
-        TurnEntity openTurn = turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)
+        TurnEntity openTurn = turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)
                 .orElseThrow(() -> new MarketClosedException(
                         "Não é possível registrar a venda porque o mercado está fechado."));
 
@@ -180,5 +180,4 @@ public class SaleService {
         return response;
     }
 }
-
 
