@@ -10,6 +10,7 @@ import br.com.aromasabor.mercadinho.sale.dto.SaleResponseDTO;
 import br.com.aromasabor.mercadinho.sale.entity.SaleEntity;
 import br.com.aromasabor.mercadinho.sale.entity.SaleItemEntity;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.exception.InvalidSaleAmountException;
 import br.com.aromasabor.mercadinho.sale.exception.MarketClosedException;
 import br.com.aromasabor.mercadinho.sale.exception.ProductOutOfStockException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
@@ -53,6 +54,8 @@ public class SaleService {
     @Transactional
     public SaleResponseDTO create(SaleRequestDTO request) {
         validateRequestHasItems(request);
+        BigDecimal discountAmount = resolveDiscountAmount(request);
+        request.getItems().forEach(item -> validateNegotiatedUnitPrice(item.getUnitPrice()));
 
         Set<Long> productIds = request.getItems().stream()
                 .map(SaleItemRequestDTO::getProductId)
@@ -76,12 +79,14 @@ public class SaleService {
 
         SaleEntity sale = SaleEntity.builder()
                 .status(SALE_STATUS_COMPLETED)
+                .subtotal(BigDecimal.ZERO)
+                .discountAmount(BigDecimal.ZERO)
                 .total(BigDecimal.ZERO)
                 .createdAt(now)
                 .turn(openTurn)
                 .build();
 
-        BigDecimal total = BigDecimal.ZERO;
+        BigDecimal subtotal = BigDecimal.ZERO;
 
         for (SaleItemRequestDTO requestedItem : request.getItems()) {
             ProductEntity product = productsById.get(requestedItem.getProductId());
@@ -91,23 +96,31 @@ public class SaleService {
 
             validateStock(product, requestedItem.getQuantity());
 
-            BigDecimal unitPrice = product.getPrice();
-            BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(requestedItem.getQuantity()));
-            total = total.add(subtotal);
+            BigDecimal unitPrice = requestedItem.getUnitPrice() != null
+                    ? requestedItem.getUnitPrice().setScale(2)
+                    : product.getPrice();
+            BigDecimal itemSubtotal = unitPrice.multiply(BigDecimal.valueOf(requestedItem.getQuantity()));
+            subtotal = subtotal.add(itemSubtotal);
 
             SaleItemEntity saleItem = SaleItemEntity.builder()
                     .product(product)
                     .quantity(requestedItem.getQuantity())
                     .unitPrice(unitPrice)
                     .unitCostPrice(product.getCostPrice())
-                    .subtotal(subtotal)
+                    .subtotal(itemSubtotal)
                     .build();
 
             sale.addItem(saleItem);
             product.setStock(product.getStock() - requestedItem.getQuantity());
         }
 
-        sale.setTotal(total);
+        if (discountAmount.compareTo(subtotal) > 0) {
+            throw new InvalidSaleAmountException("O desconto não pode ser maior que o subtotal da venda.");
+        }
+
+        sale.setSubtotal(subtotal);
+        sale.setDiscountAmount(discountAmount);
+        sale.setTotal(subtotal.subtract(discountAmount));
         SaleEntity savedSale = saleRepository.save(sale);
 
         List<StockMovementEntity> stockMovements = savedSale.getItems().stream()
@@ -147,6 +160,32 @@ public class SaleService {
         }
     }
 
+    private BigDecimal resolveDiscountAmount(SaleRequestDTO request) {
+        BigDecimal discount = request.getDiscountAmount();
+        if (discount == null) {
+            return BigDecimal.ZERO.setScale(2);
+        }
+        if (discount.signum() < 0) {
+            throw new InvalidSaleAmountException("O desconto não pode ser negativo.");
+        }
+        if (discount.stripTrailingZeros().scale() > 2) {
+            throw new InvalidSaleAmountException("O desconto deve ter no máximo 2 casas decimais.");
+        }
+        return discount.setScale(2);
+    }
+
+    private void validateNegotiatedUnitPrice(BigDecimal unitPrice) {
+        if (unitPrice == null) {
+            return;
+        }
+        if (unitPrice.signum() <= 0) {
+            throw new InvalidSaleAmountException("O preço unitário deve ser maior que zero.");
+        }
+        if (unitPrice.stripTrailingZeros().scale() > 2) {
+            throw new InvalidSaleAmountException("O preço unitário deve ter no máximo 2 casas decimais.");
+        }
+    }
+
     private void validateStock(ProductEntity product, Integer requestedQuantity) {
         if (product.getStock() < requestedQuantity) {
             throw new ProductOutOfStockException(
@@ -159,6 +198,8 @@ public class SaleService {
     private SaleResponseDTO toResponse(SaleEntity sale) {
         SaleResponseDTO response = new SaleResponseDTO();
         response.setId(sale.getId());
+        response.setSubtotal(sale.getSubtotal());
+        response.setDiscountAmount(sale.getDiscountAmount());
         response.setTotal(sale.getTotal());
         response.setStatus(sale.getStatus());
         response.setCreatedAt(sale.getCreatedAt());

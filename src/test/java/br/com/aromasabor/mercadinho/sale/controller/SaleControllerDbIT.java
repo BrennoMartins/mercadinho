@@ -182,8 +182,8 @@ class SaleControllerDbIT {
                 .andExpect(jsonPath("$[0].grossProfitComplete").value(true));
 
         jdbcTemplate.update("""
-                INSERT INTO sales (turn_id, status, total, created_at)
-                VALUES (?, 'COMPLETED', 10.00, ?)
+                INSERT INTO sales (turn_id, status, subtotal, total, created_at)
+                VALUES (?, 'COMPLETED', 10.00, 10.00, ?)
                 """, turn.getId(), LocalDateTime.now().minusDays(10));
         Long legacySaleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
         jdbcTemplate.update("""
@@ -435,6 +435,190 @@ class SaleControllerDbIT {
         assertThat(productRepository.findById(product.getId())).get()
                 .extracting(ProductEntity::getStock)
                 .isEqualTo(7);
+    }
+
+    @Test
+    void shouldPersistGeneralDiscountAndNegotiatedUnitPriceWithoutChangingCatalogPrice() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000201");
+        jdbcTemplate.update("update products set cost_price = 6.00 where id = ?", product.getId());
+
+        MvcResult result = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 2, "12.50", "3.00")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.subtotal").value(25.00))
+                .andExpect(jsonPath("$.discountAmount").value(3.00))
+                .andExpect(jsonPath("$.total").value(22.00))
+                .andExpect(jsonPath("$.items[0].unitPrice").value(12.50))
+                .andExpect(jsonPath("$.items[0].subtotal").value(25.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(10.00))
+                .andReturn();
+        long saleId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(get("/api/sales/" + saleId))
+                .andExpect(jsonPath("$.subtotal").value(25.00))
+                .andExpect(jsonPath("$.discountAmount").value(3.00))
+                .andExpect(jsonPath("$.total").value(22.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(10.00));
+        mockMvc.perform(get("/api/sales"))
+                .andExpect(jsonPath("$[0].discountAmount").value(3.00));
+
+        assertThat(jdbcTemplate.queryForObject("select unit_price from sale_items", BigDecimal.class))
+                .isEqualByComparingTo("12.50");
+        assertThat(jdbcTemplate.queryForObject("select unit_cost_price from sale_items", BigDecimal.class))
+                .isEqualByComparingTo("6.00");
+        assertThat(jdbcTemplate.queryForObject("select price from products where id = ?", BigDecimal.class,
+                product.getId())).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void shouldDefaultToCatalogPriceAndZeroDiscountForLegacyRequests() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000202");
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + product.getId() + ",\"quantity\":3}]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.subtotal").value(30.00))
+                .andExpect(jsonPath("$.discountAmount").value(0.00))
+                .andExpect(jsonPath("$.total").value(30.00))
+                .andExpect(jsonPath("$.items[0].unitPrice").value(10.00));
+    }
+
+    @Test
+    void shouldAllowDiscountEqualToSubtotal() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000203");
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 1, null, "10.00")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.total").value(0.00));
+    }
+
+    @Test
+    void shouldRejectInvalidDiscountsAndPricesWithoutPersistingOrChangingStock() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000204");
+
+        String[] invalidPayloads = {
+                saleJson(product.getId(), 1, null, "-0.01"),
+                saleJson(product.getId(), 1, null, "1.005"),
+                saleJson(product.getId(), 1, null, "10.01"),
+                saleJson(product.getId(), 1, "0", null),
+                saleJson(product.getId(), 1, "-1.00", null),
+                saleJson(product.getId(), 1, "5.555", null),
+                saleJson(product.getId(), 1, "5.00", "5.01")
+        };
+        for (String payload : invalidPayloads) {
+            mockMvc.perform(post("/api/sales")
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(payload))
+                    .andExpect(status().isBadRequest());
+        }
+
+        assertThat(jdbcTemplate.queryForObject("select count(*) from sales", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_movements", Long.class)).isZero();
+        assertThat(productRepository.findById(product.getId())).get()
+                .extracting(ProductEntity::getStock).isEqualTo(10);
+    }
+
+    @Test
+    void shouldAllowNegotiatedPriceAboveCatalogPrice() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000205");
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 2, "15.00", null)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.total").value(30.00));
+    }
+
+    @Test
+    void shouldDeductDiscountOncePerSaleInGrossProfitAggregation() throws Exception {
+        openTurn();
+        ProductEntity first = createActiveProduct("789000000206");
+        ProductEntity second = createActiveProduct("789000000207");
+        jdbcTemplate.update("update products set cost_price = 6.00 where id in (?, ?)", first.getId(), second.getId());
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"discountAmount\":4.00,\"items\":["
+                                + "{\"productId\":" + first.getId() + ",\"quantity\":1,\"unitPrice\":11.00},"
+                                + "{\"productId\":" + second.getId() + ",\"quantity\":2}]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.total").value(27.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(9.00));
+
+        mockMvc.perform(get("/api/dashboard/summary"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revenue").value(27.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(9.00));
+    }
+
+    @Test
+    void shouldUseNetTotalInTurnSummaryAndReportWhileTopProductsStayBeforeDiscount() throws Exception {
+        TurnEntity turn = openTurn();
+        ProductEntity product = createActiveProduct("789000000209");
+        jdbcTemplate.update("update products set cost_price = 6.00 where id = ?", product.getId());
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 2, "12.50", "5.00")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.total").value(20.00));
+
+        mockMvc.perform(get("/api/turns/" + turn.getId() + "/summary"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRevenue").value(20.00))
+                .andExpect(jsonPath("$.averageTicket").value(20.00))
+                .andExpect(jsonPath("$.topProducts[0].revenue").value(25.00));
+
+        String today = java.time.LocalDate.now().toString();
+        mockMvc.perform(get("/api/reports/sales").param("startDate", today).param("endDate", today))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRevenue").value(20.00))
+                .andExpect(jsonPath("$.dailySales[0].revenue").value(20.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(8.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true));
+    }
+
+    @Test
+    void shouldReportNegativeKnownProfitWhenDiscountExceedsKnownMargin() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000208");
+        jdbcTemplate.update("update products set cost_price = 9.00 where id = ?", product.getId());
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 1, null, "3.00")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(-2.00));
+    }
+
+    @Test
+    void shouldRejectInconsistentSaleTotalsAtDatabaseLevel() {
+        TurnEntity turn = openTurn();
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, subtotal, discount_amount, total, created_at)
+                VALUES (?, 'COMPLETED', 10.00, 2.00, 10.00, ?)
+                """, turn.getId(), LocalDateTime.now())).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, subtotal, discount_amount, total, created_at)
+                VALUES (?, 'COMPLETED', 10.00, 11.00, -1.00, ?)
+                """, turn.getId(), LocalDateTime.now())).isInstanceOf(Exception.class);
+    }
+
+    private String saleJson(Long productId, int quantity, String unitPrice, String discountAmount) {
+        String price = unitPrice == null ? "" : ",\"unitPrice\":" + unitPrice;
+        String discount = discountAmount == null ? "" : "\"discountAmount\":" + discountAmount + ",";
+        return "{" + discount + "\"items\":[{\"productId\":" + productId
+                + ",\"quantity\":" + quantity + price + "}]}";
     }
 
     private ProductEntity createActiveProduct(String barcode) {

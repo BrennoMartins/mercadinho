@@ -46,6 +46,11 @@ public interface SaleRepository extends JpaRepository<SaleEntity, Long> {
 
     @Query("""
             select coalesce(sum((item.unitPrice - item.unitCostPrice) * item.quantity), 0.00)
+                        - (select coalesce(sum(sale.discountAmount), 0.00)
+                           from SaleEntity sale
+                           where sale.status = 'COMPLETED'
+                             and sale.createdAt >= :start
+                             and sale.createdAt < :end)
                         as grossProfitKnownAmount,
                    coalesce(sum(case when item.unitCostPrice is null then 1L else 0L end), 0L)
                         as itemsWithoutHistoricalCost

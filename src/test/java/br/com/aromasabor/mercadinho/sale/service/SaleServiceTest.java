@@ -14,6 +14,7 @@ import br.com.aromasabor.mercadinho.sale.dto.SaleRequestDTO;
 import br.com.aromasabor.mercadinho.sale.dto.SaleResponseDTO;
 import br.com.aromasabor.mercadinho.sale.entity.SaleEntity;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.exception.InvalidSaleAmountException;
 import br.com.aromasabor.mercadinho.sale.exception.MarketClosedException;
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
@@ -185,6 +186,80 @@ class SaleServiceTest {
         assertThat(movements.get(0).getQuantity()).isEqualTo(-2);
         assertThat(movements.get(0).getReferenceSale().getId()).isEqualTo(102L);
         assertThat(rice.getStock()).isEqualTo(8);
+    }
+
+    @Test
+    void shouldApplyGeneralDiscountAndNegotiatedPrice() {
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10, "7.00");
+        stubOpenSale(rice);
+
+        SaleResponseDTO response = saleService.create(new SaleRequestDTO(
+                List.of(new SaleItemRequestDTO(1L, 2, new BigDecimal("15.00"))), new BigDecimal("5.00")));
+
+        assertThat(response.getSubtotal()).isEqualByComparingTo("30.00");
+        assertThat(response.getDiscountAmount()).isEqualByComparingTo("5.00");
+        assertThat(response.getTotal()).isEqualByComparingTo("25.00");
+        assertThat(response.getItems().get(0).getUnitPrice()).isEqualByComparingTo("15.00");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("11.00");
+        assertThat(rice.getPrice()).isEqualByComparingTo("12.50");
+    }
+
+    @Test
+    void shouldDefaultDiscountToZeroWhenOmitted() {
+        stubOpenSale(buildProduct(1L, "Arroz", "12.50", 10, "7.00"));
+
+        SaleResponseDTO response = saleService.create(new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 2))));
+
+        assertThat(response.getDiscountAmount()).isEqualByComparingTo("0.00");
+        assertThat(response.getSubtotal()).isEqualByComparingTo("25.00");
+        assertThat(response.getTotal()).isEqualByComparingTo("25.00");
+    }
+
+    @Test
+    void shouldAllowDiscountEqualToSubtotal() {
+        stubOpenSale(buildProduct(1L, "Arroz", "12.50", 10, "7.00"));
+
+        SaleResponseDTO response = saleService.create(new SaleRequestDTO(
+                List.of(new SaleItemRequestDTO(1L, 2)), new BigDecimal("25.00")));
+
+        assertThat(response.getTotal()).isEqualByComparingTo("0.00");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("-14.00");
+    }
+
+    @Test
+    void shouldRejectInvalidDiscountsAndPricesBeforeTouchingData() {
+        List<SaleRequestDTO> invalidRequests = List.of(
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1)), new BigDecimal("-0.01")),
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1)), new BigDecimal("1.001")),
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1, BigDecimal.ZERO))),
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1, new BigDecimal("-1.00")))),
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 1, new BigDecimal("1.001")))));
+
+        invalidRequests.forEach(request -> assertThatThrownBy(() -> saleService.create(request))
+                .isInstanceOf(InvalidSaleAmountException.class));
+
+        verify(productRepository, never()).findAllByIdInForUpdate(any());
+        verify(saleRepository, never()).save(any(SaleEntity.class));
+    }
+
+    @Test
+    void shouldRejectDiscountAboveSubtotalWithoutChangingStock() {
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10, "7.00");
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(buildOpenTurn()));
+
+        assertThatThrownBy(() -> saleService.create(new SaleRequestDTO(
+                List.of(new SaleItemRequestDTO(1L, 1)), new BigDecimal("12.51"))))
+                .isInstanceOf(InvalidSaleAmountException.class);
+
+        verify(saleRepository, never()).save(any(SaleEntity.class));
+        verify(stockMovementRepository, never()).saveAll(any());
+    }
+
+    private void stubOpenSale(ProductEntity... products) {
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(products));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(buildOpenTurn()));
+        when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     private TurnEntity buildOpenTurn() {
