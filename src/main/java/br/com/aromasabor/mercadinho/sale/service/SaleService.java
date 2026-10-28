@@ -99,6 +99,7 @@ public class SaleService {
                     .product(product)
                     .quantity(requestedItem.getQuantity())
                     .unitPrice(unitPrice)
+                    .unitCostPrice(product.getCostPrice())
                     .subtotal(subtotal)
                     .build();
 
@@ -135,7 +136,7 @@ public class SaleService {
 
     @Transactional(readOnly = true)
     public SaleResponseDTO findById(Long id) {
-        SaleEntity sale = saleRepository.findById(id)
+        SaleEntity sale = saleRepository.findWithItemsById(id)
                 .orElseThrow(() -> new SaleNotFoundException("Sale not found with id: " + id));
         return toResponse(sale);
     }
@@ -161,6 +162,12 @@ public class SaleService {
         response.setTotal(sale.getTotal());
         response.setStatus(sale.getStatus());
         response.setCreatedAt(sale.getCreatedAt());
+        GrossProfitSummary grossProfit = SaleGrossProfitCalculator.calculate(sale);
+        response.setGrossProfitKnownAmount("COMPLETED".equals(sale.getStatus())
+                ? grossProfit.knownAmount()
+                : null);
+        response.setGrossProfitComplete("COMPLETED".equals(sale.getStatus()) && grossProfit.isComplete());
+        response.setItemsWithoutHistoricalCost(grossProfit.itemsWithoutHistoricalCost());
 
         List<SaleItemResponseDTO> itemResponses = sale.getItems().stream()
                 .map(this::toItemResponse)
@@ -180,4 +187,3 @@ public class SaleService {
         return response;
     }
 }
-

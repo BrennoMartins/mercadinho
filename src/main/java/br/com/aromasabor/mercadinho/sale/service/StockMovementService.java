@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class StockMovementService {
 
-    private static final Set<String> MOVEMENT_TYPES = Set.of("SALE", "ENTRY", "ADJUSTMENT");
+    private static final Set<String> MOVEMENT_TYPES = Set.of("SALE", "ENTRY", "ADJUSTMENT", "DISCARD");
     private static final int MAX_PAGE_SIZE = 100;
 
     private final StockMovementRepository stockMovementRepository;
@@ -38,7 +38,7 @@ public class StockMovementService {
         if (normalizedMovementType != null
                 && (normalizedMovementType.isEmpty() || !MOVEMENT_TYPES.contains(normalizedMovementType))) {
             throw new InvalidStockMovementFilterException(
-                    "movementType deve ser SALE, ENTRY ou ADJUSTMENT.");
+                    "movementType deve ser SALE, ENTRY, ADJUSTMENT ou DISCARD.");
         }
 
         if (startDate != null && endDate != null && startDate.isAfter(endDate)) {

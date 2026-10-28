@@ -24,7 +24,8 @@ public class DashboardController {
     private final DashboardInsightsService dashboardInsightsService;
 
     @GetMapping("/summary")
-    @Operation(summary = "Obter indicadores operacionais do dia atual")
+    @Operation(summary = "Obter indicadores operacionais do dia atual",
+            description = "Inclui lucro bruto conhecido e a quantidade de itens sem custo histórico.")
     @ApiResponse(responseCode = "200", description = "Resumo operacional retornado com sucesso")
     public DashboardSummaryResponse getSummary() {
         return dashboardService.getSummary();

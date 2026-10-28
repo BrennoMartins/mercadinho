@@ -6,6 +6,7 @@ import br.com.aromasabor.mercadinho.report.exception.InvalidSalesReportPeriodExc
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesReportProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesSummaryProjection;
+import br.com.aromasabor.mercadinho.sale.repository.projection.GrossProfitSummaryProjection;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DateTimeException;
@@ -56,6 +57,13 @@ public class SalesReportService {
         BigDecimal revenue = summary == null || summary.getTotalRevenue() == null
                 ? ZERO_MONEY
                 : summary.getTotalRevenue();
+        GrossProfitSummaryProjection grossProfit = saleRepository.getGrossProfitSummary(start, end);
+        BigDecimal grossProfitKnownAmount = grossProfit == null || grossProfit.getGrossProfitKnownAmount() == null
+                ? ZERO_MONEY
+                : grossProfit.getGrossProfitKnownAmount();
+        long itemsWithoutHistoricalCost = grossProfit == null || grossProfit.getItemsWithoutHistoricalCost() == null
+                ? 0L
+                : grossProfit.getItemsWithoutHistoricalCost();
 
         List<DailySalesReportEntry> dailySales = buildDailySales(startDate, endDate,
                 saleRepository.getDailySalesReport(start, end));
@@ -66,6 +74,9 @@ public class SalesReportService {
         response.setTotalRevenue(revenue);
         response.setSalesCount(salesCount);
         response.setAverageTicket(calculateAverageTicket(revenue, salesCount));
+        response.setGrossProfitKnownAmount(grossProfitKnownAmount);
+        response.setGrossProfitComplete(itemsWithoutHistoricalCost == 0);
+        response.setItemsWithoutHistoricalCost(itemsWithoutHistoricalCost);
         response.setDailySales(dailySales);
         return response;
     }

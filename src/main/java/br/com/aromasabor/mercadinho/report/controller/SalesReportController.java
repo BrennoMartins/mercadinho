@@ -25,7 +25,8 @@ public class SalesReportController {
     @Operation(
             summary = "Consultar relatório de vendas por período",
             description = "As datas inicial e final são inclusivas e representam dias completos. "
-                    + "São consideradas somente vendas COMPLETED.")
+                    + "São consideradas somente vendas COMPLETED. O lucro bruto informa o valor calculado "
+                    + "com custos históricos conhecidos e se o resultado é completo.")
     @ApiResponse(responseCode = "200", description = "Relatório de vendas retornado com sucesso")
     @ApiResponse(responseCode = "400", description = "Datas ausentes, inválidas ou período invertido")
     public SalesReportResponse getReport(

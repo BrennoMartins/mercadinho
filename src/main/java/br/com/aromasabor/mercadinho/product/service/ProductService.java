@@ -5,6 +5,7 @@ import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockDiscardRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
@@ -12,13 +13,16 @@ import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
+import br.com.aromasabor.mercadinho.sale.dto.StockMovementResponseDTO;
 import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +32,7 @@ public class ProductService {
 
     private static final String MOVEMENT_TYPE_ENTRY = "ENTRY";
     private static final String MOVEMENT_TYPE_ADJUSTMENT = "ADJUSTMENT";
+    private static final String MOVEMENT_TYPE_DISCARD = "DISCARD";
 
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
@@ -52,9 +57,10 @@ public class ProductService {
 
         ProductEntity product = ProductEntity.builder()
                 .barcode(request.getBarcode())
-                .name(request.getName())
+                .name(request.getName().toUpperCase(Locale.ROOT))
                 .category(category)
                 .price(request.getPrice())
+                .costPrice(request.getCostPrice())
                 .stock(request.getStock())
                 .active(true)
                 .createdAt(now)
@@ -96,8 +102,12 @@ public class ProductService {
 
     @Transactional(readOnly = true)
     public List<ProductResponseDTO> searchByName(String name) {
-        return productRepository.findByNameContainingIgnoreCase(name).stream()
-                .filter(ProductEntity::getActive)
+        if (name == null || name.isBlank()) {
+            return List.of();
+        }
+
+        return productRepository.findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc(name.trim())
+                .stream()
                 .map(this::toResponse)
                 .toList();
     }
@@ -114,7 +124,7 @@ public class ProductService {
         }
 
         if (request.getName() != null && !request.getName().isBlank()) {
-            product.setName(request.getName());
+            product.setName(request.getName().toUpperCase(Locale.ROOT));
         }
 
         if (request.getCategoryId() != null) {
@@ -125,6 +135,10 @@ public class ProductService {
 
         if (request.getPrice() != null) {
             product.setPrice(request.getPrice());
+        }
+
+        if (request.getCostPrice() != null) {
+            product.setCostPrice(request.getCostPrice());
         }
 
         product.setUpdatedAt(LocalDateTime.now());
@@ -218,6 +232,48 @@ public class ProductService {
         return toResponse(productRepository.save(product));
     }
 
+    @Transactional
+    public StockMovementResponseDTO discardStock(Long id, StockDiscardRequestDTO request) {
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .filter(ProductEntity::getActive)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        if (request.getQuantity() > product.getStock()) {
+            throw new InsufficientStockForDiscardException(
+                    "A quantidade a descartar não pode ser maior que o estoque disponível.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        product.setStock(product.getStock() - request.getQuantity());
+        product.setUpdatedAt(now);
+
+        StockMovementEntity movement = StockMovementEntity.builder()
+                .product(product)
+                .movementType(MOVEMENT_TYPE_DISCARD)
+                .quantity(-request.getQuantity())
+                .referenceSale(null)
+                .reason(request.getObservation() == null || request.getObservation().isBlank()
+                        ? null
+                        : request.getObservation().trim())
+                .discardReason(request.getReason().name())
+                .createdAt(now)
+                .build();
+
+        StockMovementEntity savedMovement = stockMovementRepository.save(movement);
+        productRepository.save(product);
+
+        return new StockMovementResponseDTO(
+                savedMovement.getId(),
+                product.getId(),
+                product.getName(),
+                savedMovement.getMovementType(),
+                savedMovement.getQuantity(),
+                savedMovement.getCreatedAt(),
+                savedMovement.getReason(),
+                savedMovement.getDiscardReason(),
+                null);
+    }
+
     private void validateBarcodeAvailability(String barcode, Long excludedProductId) {
         if (!productRepository.existsByBarcode(barcode)) {
             return;
@@ -242,6 +298,7 @@ public class ProductService {
         response.setBarcode(product.getBarcode());
         response.setName(product.getName());
         response.setPrice(product.getPrice());
+        response.setCostPrice(product.getCostPrice());
         response.setStock(product.getStock());
         response.setActive(product.getActive());
         response.setCreatedAt(product.getCreatedAt());

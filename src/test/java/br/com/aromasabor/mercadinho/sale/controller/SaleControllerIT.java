@@ -48,7 +48,10 @@ class SaleControllerIT {
                 new BigDecimal("20.00"),
                 "COMPLETED",
                 LocalDateTime.now(),
-                List.of(new SaleItemResponseDTO(1L, "Arroz", 2, new BigDecimal("10.00"), new BigDecimal("20.00")))
+                List.of(new SaleItemResponseDTO(1L, "Arroz", 2, new BigDecimal("10.00"), new BigDecimal("20.00"))),
+                new BigDecimal("8.00"),
+                true,
+                0L
         );
 
         when(saleService.create(any(SaleRequestDTO.class))).thenReturn(response);
@@ -76,4 +79,3 @@ class SaleControllerIT {
                         "Não é possível registrar a venda porque o mercado está fechado."));
     }
 }
-

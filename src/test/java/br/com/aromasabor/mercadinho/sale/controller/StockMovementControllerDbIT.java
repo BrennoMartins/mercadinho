@@ -11,7 +11,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockDiscardReason;
+import br.com.aromasabor.mercadinho.product.dto.StockDiscardRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
+import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.product.service.ProductService;
@@ -124,6 +127,86 @@ class StockMovementControllerDbIT {
                 .andExpect(jsonPath("$.content[1].reason").value("Venda #1"))
                 .andExpect(jsonPath("$.content[1].referenceSaleId").value(1))
                 .andExpect(jsonPath("$.content[0].createdAt").exists());
+    }
+
+    @Test
+    void shouldPersistCostPriceAndPreserveItWhenOmittedFromProductUpdate() throws Exception {
+        mockMvc.perform(post("/api/products")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000112",
+                                  "name": "Café especial",
+                                  "categoryId": 1,
+                                  "price": 12.50,
+                                  "costPrice": 7.25,
+                                  "stock": 10
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("CAFÉ ESPECIAL"))
+                .andExpect(jsonPath("$.price").value(12.50))
+                .andExpect(jsonPath("$.costPrice").value(7.25))
+                .andExpect(jsonPath("$.stock").value(10));
+
+        ProductEntity product = productRepository.findByBarcode("789000000112").orElseThrow();
+        assertThat(jdbcTemplate.queryForObject(
+                "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                .isEqualByComparingTo("7.25");
+
+        mockMvc.perform(put("/api/products/" + product.getId())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000112",
+                                  "name": "Café especial premium",
+                                  "categoryId": 1,
+                                  "price": 14.00,
+                                  "costPrice": 8.40
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("CAFÉ ESPECIAL PREMIUM"))
+                .andExpect(jsonPath("$.costPrice").value(8.40))
+                .andExpect(jsonPath("$.stock").value(10));
+
+        mockMvc.perform(put("/api/products/" + product.getId())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000112",
+                                  "name": "Café especial revisado",
+                                  "categoryId": 1,
+                                  "price": 15.00
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.costPrice").value(8.40));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                .isEqualByComparingTo("8.40");
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId()))
+                .isEqualTo(10);
+        assertThat(jdbcTemplate.queryForObject(
+                "select category_id from products where id = ?", Long.class, product.getId()))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void shouldReturnNullCostPriceForExistingProductsWithoutRecordedCost() throws Exception {
+        ProductEntity product = createProduct("789000000113", "Biscoito");
+
+        var response = mockMvc.perform(get("/api/products/" + product.getId()))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        assertThat(objectMapper.readTree(response.getResponse().getContentAsString()).get("costPrice").isNull())
+                .isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                .isNull();
     }
 
     @Test
@@ -246,7 +329,8 @@ class StockMovementControllerDbIT {
     void shouldRejectInvalidFiltersAndPagination() throws Exception {
         mockMvc.perform(get("/api/stock-movements").param("movementType", "UNKNOWN"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("movementType deve ser SALE, ENTRY ou ADJUSTMENT."));
+                .andExpect(jsonPath("$.message").value(
+                        "movementType deve ser SALE, ENTRY, ADJUSTMENT ou DISCARD."));
 
         mockMvc.perform(get("/api/stock-movements").param("productId", "0"))
                 .andExpect(status().isBadRequest());
@@ -329,6 +413,147 @@ class StockMovementControllerDbIT {
                 "select count(*) from stock_movements where product_id = ?",
                 Integer.class,
                 product.getId())).isZero();
+    }
+
+    @Test
+    void shouldDiscardStockAndExposeReasonAndObservationInMovementHistoryWithoutChangingSalesOrTurn() throws Exception {
+        ProductEntity product = createProduct("789000000121", "Iogurte");
+        openTurn();
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + product.getId() + ",\"quantity\":2}]}"))
+                .andExpect(status().isCreated());
+
+        BigDecimal salesTotalBefore = jdbcTemplate.queryForObject(
+                "select sum(total) from sales", BigDecimal.class);
+        int salesCountBefore = jdbcTemplate.queryForObject("select count(*) from sales", Integer.class);
+        String turnStatusBefore = jdbcTemplate.queryForObject("select status from turns", String.class);
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/discards")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "quantity": 3,
+                                  "reason": "EXPIRED",
+                                  "observation": "Validade vencida"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.movementType").value("DISCARD"))
+                .andExpect(jsonPath("$.quantity").value(-3))
+                .andExpect(jsonPath("$.discardReason").value("EXPIRED"))
+                .andExpect(jsonPath("$.reason").value("Validade vencida"))
+                .andExpect(jsonPath("$.referenceSaleId").doesNotExist());
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId())).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject("select sum(total) from sales", BigDecimal.class))
+                .isEqualByComparingTo(salesTotalBefore);
+        assertThat(jdbcTemplate.queryForObject("select count(*) from sales", Integer.class))
+                .isEqualTo(salesCountBefore);
+        assertThat(jdbcTemplate.queryForObject("select status from turns", String.class))
+                .isEqualTo(turnStatusBefore);
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_movements where product_id = ? and movement_type = 'DISCARD'",
+                Integer.class,
+                product.getId())).isEqualTo(1);
+
+        mockMvc.perform(get("/api/stock-movements")
+                        .param("movementType", "DISCARD")
+                        .param("productId", product.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].movementType").value("DISCARD"))
+                .andExpect(jsonPath("$.content[0].quantity").value(-3))
+                .andExpect(jsonPath("$.content[0].discardReason").value("EXPIRED"))
+                .andExpect(jsonPath("$.content[0].reason").value("Validade vencida"));
+    }
+
+    @Test
+    void shouldRejectInvalidDiscardQuantitiesAndUnknownProducts() throws Exception {
+        ProductEntity product = createProduct("789000000122", "Queijo");
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/discards")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":0,\"reason\":\"OTHER\"}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/discards")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":-1,\"reason\":\"OTHER\"}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/discards")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":11,\"reason\":\"OTHER\"}"))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(post("/api/products/99999/discards")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":1,\"reason\":\"OTHER\"}"))
+                .andExpect(status().isNotFound());
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId())).isEqualTo(10);
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_movements", Integer.class)).isZero();
+    }
+
+    @Test
+    void shouldRollbackStockWhenDiscardMovementInsertFails() {
+        ProductEntity product = createProduct("789000000123", "Leite");
+        jdbcTemplate.execute("""
+                CREATE OR REPLACE FUNCTION fail_stock_discard_for_test() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.movement_type = 'DISCARD' THEN
+                        RAISE EXCEPTION 'forced stock discard failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_stock_discard_for_test
+                BEFORE INSERT ON stock_movements
+                FOR EACH ROW EXECUTE FUNCTION fail_stock_discard_for_test()
+                """);
+
+        try {
+            assertThatThrownBy(() -> productService.discardStock(
+                    product.getId(), new StockDiscardRequestDTO(3, StockDiscardReason.DAMAGED, "Quebra")))
+                    .isInstanceOf(RuntimeException.class);
+
+            assertThat(jdbcTemplate.queryForObject(
+                    "select stock from products where id = ?", Integer.class, product.getId()))
+                    .isEqualTo(10);
+            assertThat(jdbcTemplate.queryForObject(
+                    "select count(*) from stock_movements where product_id = ?",
+                    Integer.class,
+                    product.getId())).isZero();
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_stock_discard_for_test ON stock_movements");
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_stock_discard_for_test()");
+        }
+    }
+
+    @Test
+    void shouldSerializeConcurrentDiscardsAndPreventNegativeStock() throws Exception {
+        ProductEntity product = createProduct("789000000124", "Farinha");
+        CountDownLatch start = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var firstDiscard = executor.submit(() -> tryDiscardAfterStart(start, product.getId()));
+            var secondDiscard = executor.submit(() -> tryDiscardAfterStart(start, product.getId()));
+
+            start.countDown();
+            assertThat(firstDiscard.get(10, TimeUnit.SECONDS)).isNotEqualTo(secondDiscard.get(10, TimeUnit.SECONDS));
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId())).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForList(
+                "select quantity from stock_movements where product_id = ? and movement_type = 'DISCARD'",
+                Integer.class,
+                product.getId())).containsExactly(-7);
     }
 
     @Test
@@ -421,7 +646,7 @@ class StockMovementControllerDbIT {
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name").value("Biscoito integral"))
+                .andExpect(jsonPath("$.name").value("BISCOITO INTEGRAL"))
                 .andExpect(jsonPath("$.stock").value(10));
 
         assertThat(jdbcTemplate.queryForObject(
@@ -501,6 +726,17 @@ class StockMovementControllerDbIT {
                 .status(TurnStatus.OPEN)
                 .openingNote("Início do expediente")
                 .build());
+    }
+
+    private boolean tryDiscardAfterStart(CountDownLatch start, Long productId) throws InterruptedException {
+        start.await();
+        try {
+            productService.discardStock(
+                    productId, new StockDiscardRequestDTO(7, StockDiscardReason.DAMAGED, null));
+            return true;
+        } catch (InsufficientStockForDiscardException exception) {
+            return false;
+        }
     }
 
     private static EmbeddedPostgres startPostgres() {

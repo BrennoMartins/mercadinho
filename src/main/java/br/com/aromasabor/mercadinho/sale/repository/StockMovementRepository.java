@@ -21,6 +21,7 @@ public interface StockMovementRepository extends JpaRepository<StockMovementEnti
                         movement.quantity,
                         movement.createdAt,
                         movement.reason,
+                        movement.discardReason,
                         sale.id
                     )
                     from StockMovementEntity movement

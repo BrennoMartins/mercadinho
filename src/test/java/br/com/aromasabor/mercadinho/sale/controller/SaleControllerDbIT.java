@@ -154,6 +154,51 @@ class SaleControllerDbIT {
     }
 
     @Test
+    void shouldExposeHistoricalGrossProfitAndKeepLegacyCostUnavailableAfterCatalogChanges() throws Exception {
+        TurnEntity turn = openTurn();
+        ProductEntity product = createActiveProduct("789000000125");
+        jdbcTemplate.update("update products set cost_price = 6.00 where id = ?", product.getId());
+
+        MvcResult saleResult = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + product.getId() + ",\"quantity\":2}]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(8.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(0))
+                .andExpect(jsonPath("$.total").value(20.00))
+                .andReturn();
+        long saleId = objectMapper.readTree(saleResult.getResponse().getContentAsString()).get("id").asLong();
+
+        jdbcTemplate.update("update products set cost_price = 1.00 where id = ?", product.getId());
+        mockMvc.perform(get("/api/sales/" + saleId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(8.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.total").value(20.00));
+        mockMvc.perform(get("/api/sales"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].grossProfitKnownAmount").value(8.00))
+                .andExpect(jsonPath("$[0].grossProfitComplete").value(true));
+
+        jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, total, created_at)
+                VALUES (?, 'COMPLETED', 10.00, ?)
+                """, turn.getId(), LocalDateTime.now().minusDays(10));
+        Long legacySaleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal)
+                VALUES (?, ?, 1, 10.00, 10.00)
+                """, legacySaleId, product.getId());
+
+        mockMvc.perform(get("/api/sales/" + legacySaleId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(0.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(false))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(1));
+    }
+
+    @Test
     void shouldWaitForInFlightSaleTurnReadBeforeClosingTurn() throws Exception {
         TurnEntity turn = openTurn();
         CountDownLatch sharedLockAcquired = new CountDownLatch(1);

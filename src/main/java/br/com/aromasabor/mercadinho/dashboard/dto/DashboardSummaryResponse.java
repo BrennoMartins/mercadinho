@@ -28,6 +28,15 @@ public class DashboardSummaryResponse {
     @Schema(description = "Ticket médio das vendas concluídas no dia")
     private BigDecimal averageTicket;
 
+    @Schema(description = "Lucro bruto calculado apenas para itens com custo histórico conhecido")
+    private BigDecimal grossProfitKnownAmount;
+
+    @Schema(description = "Indica se todos os itens concluídos do dia possuem custo histórico")
+    private Boolean grossProfitComplete;
+
+    @Schema(description = "Quantidade de itens de venda sem custo histórico no dia")
+    private Long itemsWithoutHistoricalCost;
+
     @Schema(description = "Turno aberto atual ou null quando não houver turno aberto")
     private CurrentTurnResponse currentTurn;
 

@@ -35,7 +35,7 @@ public class StockMovementController {
     public Page<StockMovementResponseDTO> findHistory(
             @Parameter(description = "Filtra pelo identificador do produto", example = "7")
             @RequestParam(required = false) Long productId,
-            @Parameter(description = "Filtra por SALE, ENTRY ou ADJUSTMENT", example = "ENTRY")
+            @Parameter(description = "Filtra por SALE, ENTRY, ADJUSTMENT ou DISCARD", example = "DISCARD")
             @RequestParam(required = false) String movementType,
             @Parameter(description = "Limite inicial inclusivo em ISO-8601", example = "2026-10-01T00:00:00")
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,

@@ -43,6 +43,9 @@ class SalesReportControllerIT {
                         new BigDecimal("61.00"),
                         3L,
                         new BigDecimal("20.33"),
+                        new BigDecimal("18.00"),
+                        false,
+                        1L,
                         List.of(
                                 new DailySalesReportEntry(LocalDate.of(2026, 10, 1), new BigDecimal("40.00"), 2L),
                                 new DailySalesReportEntry(LocalDate.of(2026, 10, 2), new BigDecimal("0.00"), 0L),
@@ -57,6 +60,9 @@ class SalesReportControllerIT {
                 .andExpect(jsonPath("$.totalRevenue").value(61.00))
                 .andExpect(jsonPath("$.salesCount").value(3))
                 .andExpect(jsonPath("$.averageTicket").value(20.33))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(18.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(false))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(1))
                 .andExpect(jsonPath("$.dailySales").isArray())
                 .andExpect(jsonPath("$.dailySales").value(org.hamcrest.Matchers.hasSize(3)))
                 .andExpect(jsonPath("$.dailySales[1].date").value("2026-10-02"))

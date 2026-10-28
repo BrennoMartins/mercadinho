@@ -61,6 +61,30 @@ class CategoryControllerIT {
     }
 
     @Test
+    void shouldRejectBlankCategoryName() throws Exception {
+        CategoryRequestDTO request = new CategoryRequestDTO();
+        request.setName("   ");
+
+        mockMvc.perform(post("/api/categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.name").value("não pode estar vazio"));
+    }
+
+    @Test
+    void shouldRejectCategoryNameLongerThanDatabaseLimit() throws Exception {
+        CategoryRequestDTO request = new CategoryRequestDTO();
+        request.setName("a".repeat(101));
+
+        mockMvc.perform(post("/api/categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.name").value("deve ter no máximo 100 caracteres"));
+    }
+
+    @Test
     void shouldListCategories() throws Exception {
         CategoryResponseDTO response = new CategoryResponseDTO();
         response.setId(1L);

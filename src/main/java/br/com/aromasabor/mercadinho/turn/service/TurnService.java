@@ -87,7 +87,8 @@ public class TurnService {
         LocalDateTime closedAt = LocalDateTime.now();
         turn.setClosedAt(closedAt);
         turn.setStatus(TurnStatus.CLOSED);
-        turn.setClosingNote(request.getClosingNote());
+        String closingNote = request.getClosingNote();
+        turn.setClosingNote(closingNote == null || closingNote.isBlank() ? null : closingNote);
 
         TurnEntity savedTurn = turnRepository.save(turn);
         return toCloseTurnResponse(savedTurn);

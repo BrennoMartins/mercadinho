@@ -2,12 +2,15 @@ package br.com.aromasabor.mercadinho.sale.repository;
 
 import br.com.aromasabor.mercadinho.sale.entity.SaleEntity;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesSummaryProjection;
+import br.com.aromasabor.mercadinho.sale.repository.projection.GrossProfitSummaryProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesReportProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.RecentSaleProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.TurnSalesSummaryProjection;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -15,7 +18,11 @@ import org.springframework.data.repository.query.Param;
 
 public interface SaleRepository extends JpaRepository<SaleEntity, Long> {
 
-	List<SaleEntity> findAllByOrderByCreatedAtDesc();
+    @EntityGraph(attributePaths = {"items", "items.product"})
+    List<SaleEntity> findAllByOrderByCreatedAtDesc();
+
+    @EntityGraph(attributePaths = {"items", "items.product"})
+    Optional<SaleEntity> findWithItemsById(Long id);
 
     @Query("""
             select count(s.id) as salesCount,
@@ -36,6 +43,19 @@ public interface SaleRepository extends JpaRepository<SaleEntity, Long> {
             """)
     DailySalesSummaryProjection getDailySummary(@Param("start") LocalDateTime start,
                                                 @Param("end") LocalDateTime end);
+
+    @Query("""
+            select coalesce(sum((item.unitPrice - item.unitCostPrice) * item.quantity), 0.00)
+                        as grossProfitKnownAmount,
+                   coalesce(sum(case when item.unitCostPrice is null then 1L else 0L end), 0L)
+                        as itemsWithoutHistoricalCost
+            from SaleItemEntity item
+            where item.sale.status = 'COMPLETED'
+              and item.sale.createdAt >= :start
+              and item.sale.createdAt < :end
+            """)
+    GrossProfitSummaryProjection getGrossProfitSummary(@Param("start") LocalDateTime start,
+                                                       @Param("end") LocalDateTime end);
 
     @Query(value = """
             select cast(s.created_at as date) as saleDate,

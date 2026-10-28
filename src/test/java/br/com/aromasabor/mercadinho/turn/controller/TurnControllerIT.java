@@ -1,8 +1,10 @@
 package br.com.aromasabor.mercadinho.turn.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -140,6 +142,52 @@ class TurnControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CLOSED"))
                 .andExpect(jsonPath("$.durationInMinutes").value(480));
+    }
+
+    @Test
+    void shouldCloseTurnWhenClosingNoteIsOmitted() throws Exception {
+        UUID turnId = UUID.randomUUID();
+        CloseTurnResponse response = new CloseTurnResponse(
+                turnId,
+                LocalDateTime.now().minusHours(8),
+                LocalDateTime.now(),
+                TurnStatus.CLOSED,
+                null,
+                480L
+        );
+
+        when(turnService.close(eq(turnId), any(CloseTurnRequest.class))).thenReturn(response);
+
+        mockMvc.perform(post("/api/turns/{id}/close", turnId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CLOSED"));
+
+        verify(turnService).close(eq(turnId), argThat(request -> request.getClosingNote() == null));
+    }
+
+    @Test
+    void shouldCloseTurnWhenClosingNoteIsEmpty() throws Exception {
+        UUID turnId = UUID.randomUUID();
+        CloseTurnResponse response = new CloseTurnResponse(
+                turnId,
+                LocalDateTime.now().minusHours(8),
+                LocalDateTime.now(),
+                TurnStatus.CLOSED,
+                null,
+                480L
+        );
+
+        when(turnService.close(eq(turnId), any(CloseTurnRequest.class))).thenReturn(response);
+
+        mockMvc.perform(post("/api/turns/{id}/close", turnId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"closingNote\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CLOSED"));
+
+        verify(turnService).close(eq(turnId), argThat(request -> "".equals(request.getClosingNote())));
     }
 
     @Test

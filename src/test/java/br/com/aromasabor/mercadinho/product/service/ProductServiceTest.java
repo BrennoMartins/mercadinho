@@ -11,6 +11,8 @@ import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockDiscardReason;
+import br.com.aromasabor.mercadinho.product.dto.StockDiscardRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
@@ -18,6 +20,7 @@ import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
@@ -56,6 +59,7 @@ class ProductServiceTest {
         request.setName("Coca-Cola 2L");
         request.setCategoryId(2L);
         request.setPrice(new BigDecimal("9.99"));
+        request.setCostPrice(new BigDecimal("6.25"));
         request.setStock(20);
 
         CategoryEntity category = CategoryEntity.builder()
@@ -76,13 +80,45 @@ class ProductServiceTest {
 
         assertThat(response).isNotNull();
         assertThat(response.getBarcode()).isEqualTo("7894900011517");
-        assertThat(response.getName()).isEqualTo("Coca-Cola 2L");
+        assertThat(response.getName()).isEqualTo("COCA-COLA 2L");
         assertThat(response.getCategory()).isNotNull();
         assertThat(response.getCategory().getId()).isEqualTo(2L);
         assertThat(response.getPrice()).isEqualByComparingTo(new BigDecimal("9.99"));
+        assertThat(response.getCostPrice()).isEqualByComparingTo("6.25");
         assertThat(response.getStock()).isEqualTo(20);
         assertThat(response.getActive()).isTrue();
         verify(productRepository).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldPersistLowercaseProductNameInUppercaseAndPreserveAccentsAndSymbols() {
+        ProductRequestDTO request = new ProductRequestDTO();
+        request.setBarcode("7894900011518");
+        request.setName("café-cola 2 litros");
+        request.setCategoryId(2L);
+        request.setPrice(new BigDecimal("9.99"));
+        request.setStock(20);
+
+        CategoryEntity category = CategoryEntity.builder()
+                .id(2L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(productRepository.existsByBarcode("7894900011518")).thenReturn(false);
+        when(categoryRepository.findById(2L)).thenReturn(Optional.of(category));
+        when(productRepository.save(any(ProductEntity.class))).thenAnswer(invocation -> {
+            ProductEntity product = invocation.getArgument(0);
+            product.setId(2L);
+            return product;
+        });
+
+        ProductResponseDTO response = productService.create(request);
+        ArgumentCaptor<ProductEntity> productCaptor = ArgumentCaptor.forClass(ProductEntity.class);
+
+        verify(productRepository).save(productCaptor.capture());
+        assertThat(productCaptor.getValue().getName()).isEqualTo("CAFÉ-COLA 2 LITROS");
+        assertThat(response.getName()).isEqualTo("CAFÉ-COLA 2 LITROS");
     }
 
     @Test
@@ -130,6 +166,35 @@ class ProductServiceTest {
         assertThat(response).allMatch(product -> Boolean.FALSE.equals(product.getActive()));
         assertThat(response.getLast().getStock()).isEqualTo(7);
         verify(productRepository).findByActiveFalseOrderByIdAsc();
+    }
+
+    @Test
+    void shouldSearchActiveProductsByTrimmedNameUsingLimitedRepositoryQuery() {
+        ProductEntity product = ProductEntity.builder()
+                .id(8L)
+                .barcode("78908")
+                .name("CAFÉ TORRADO")
+                .price(new BigDecimal("14.50"))
+                .stock(6)
+                .active(true)
+                .build();
+        when(productRepository.findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc("cafe"))
+                .thenReturn(List.of(product));
+
+        List<ProductResponseDTO> response = productService.searchByName("  cafe  ");
+
+        assertThat(response).hasSize(1);
+        assertThat(response.getFirst().getName()).isEqualTo("CAFÉ TORRADO");
+        verify(productRepository)
+                .findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc("cafe");
+    }
+
+    @Test
+    void shouldNotSearchProductsForBlankName() {
+        assertThat(productService.searchByName("  ")).isEmpty();
+
+        verify(productRepository, never())
+                .findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc(any());
     }
 
     @Test
@@ -374,6 +439,102 @@ class ProductServiceTest {
     }
 
     @Test
+    void shouldDiscardStockAndPersistCategorizedReasonAndObservation() {
+        ProductEntity product = ProductEntity.builder()
+                .id(20L)
+                .name("Arroz")
+                .stock(5)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class))).thenAnswer(invocation -> {
+            StockMovementEntity movement = invocation.getArgument(0);
+            movement.setId(41L);
+            return movement;
+        });
+        when(productRepository.save(product)).thenReturn(product);
+
+        var response = productService.discardStock(
+                20L, new StockDiscardRequestDTO(2, StockDiscardReason.DAMAGED, "Embalagem violada"));
+
+        ArgumentCaptor<StockMovementEntity> movementCaptor = ArgumentCaptor.forClass(StockMovementEntity.class);
+        verify(stockMovementRepository).save(movementCaptor.capture());
+        assertThat(response.getId()).isEqualTo(41L);
+        assertThat(response.getMovementType()).isEqualTo("DISCARD");
+        assertThat(response.getQuantity()).isEqualTo(-2);
+        assertThat(response.getDiscardReason()).isEqualTo("DAMAGED");
+        assertThat(response.getReason()).isEqualTo("Embalagem violada");
+        assertThat(response.getReferenceSaleId()).isNull();
+        assertThat(product.getStock()).isEqualTo(3);
+        assertThat(movementCaptor.getValue().getDiscardReason()).isEqualTo("DAMAGED");
+        assertThat(movementCaptor.getValue().getReason()).isEqualTo("Embalagem violada");
+        verify(productRepository).save(product);
+    }
+
+    @Test
+    void shouldDiscardStockWithoutOptionalObservation() {
+        ProductEntity product = ProductEntity.builder().id(21L).name("Feijão").stock(2).active(true).build();
+        when(productRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(productRepository.save(product)).thenReturn(product);
+
+        var response = productService.discardStock(
+                21L, new StockDiscardRequestDTO(1, StockDiscardReason.EXPIRED, null));
+
+        assertThat(response.getReason()).isNull();
+        assertThat(response.getDiscardReason()).isEqualTo("EXPIRED");
+        assertThat(response.getQuantity()).isEqualTo(-1);
+        assertThat(product.getStock()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRejectDiscardExceedingAvailableStockWithoutPersistingChanges() {
+        ProductEntity product = ProductEntity.builder().id(22L).name("Leite").stock(1).active(true).build();
+        when(productRepository.findByIdForUpdate(22L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> productService.discardStock(
+                22L, new StockDiscardRequestDTO(2, StockDiscardReason.OTHER, null)))
+                .isInstanceOf(InsufficientStockForDiscardException.class);
+
+        assertThat(product.getStock()).isEqualTo(1);
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldRejectDiscardForMissingOrInactiveProduct() {
+        when(productRepository.findByIdForUpdate(23L)).thenReturn(Optional.empty());
+        when(productRepository.findByIdForUpdate(24L)).thenReturn(Optional.of(
+                ProductEntity.builder().id(24L).stock(5).active(false).build()));
+
+        assertThatThrownBy(() -> productService.discardStock(
+                23L, new StockDiscardRequestDTO(1, StockDiscardReason.OTHER, null)))
+                .isInstanceOf(ProductNotFoundException.class);
+        assertThatThrownBy(() -> productService.discardStock(
+                24L, new StockDiscardRequestDTO(1, StockDiscardReason.OTHER, null)))
+                .isInstanceOf(ProductNotFoundException.class);
+
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
+    void shouldNotSaveProductWhenDiscardMovementPersistenceFails() {
+        ProductEntity product = ProductEntity.builder().id(25L).stock(5).active(true).build();
+        when(productRepository.findByIdForUpdate(25L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class)))
+                .thenThrow(new RuntimeException("movement persistence failed"));
+
+        assertThatThrownBy(() -> productService.discardStock(
+                25L, new StockDiscardRequestDTO(2, StockDiscardReason.OTHER, null)))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("movement persistence failed");
+
+        assertThat(product.getStock()).isEqualTo(3);
+        verify(productRepository, never()).save(any(ProductEntity.class));
+    }
+
+    @Test
     void shouldUpdateProductDetailsWithoutChangingStockOrCreatingMovement() {
         CategoryEntity category = CategoryEntity.builder()
                 .id(2L)
@@ -392,7 +553,7 @@ class ProductServiceTest {
                 .updatedAt(LocalDateTime.now().minusDays(1))
                 .build();
         ProductUpdateRequestDTO request = new ProductUpdateRequestDTO(
-                "78916", "Café especial", 2L, new BigDecimal("12.50"));
+                "78916", "Café especial 2 Tipo A", 2L, new BigDecimal("12.50"), new BigDecimal("8.40"));
 
         when(productRepository.findById(16L)).thenReturn(Optional.of(product));
         when(categoryRepository.findById(2L)).thenReturn(Optional.of(category));
@@ -400,12 +561,73 @@ class ProductServiceTest {
 
         ProductResponseDTO response = productService.update(16L, request);
 
-        assertThat(response.getName()).isEqualTo("Café especial");
+        assertThat(response.getName()).isEqualTo("CAFÉ ESPECIAL 2 TIPO A");
+        assertThat(product.getName()).isEqualTo("CAFÉ ESPECIAL 2 TIPO A");
         assertThat(response.getPrice()).isEqualByComparingTo("12.50");
+        assertThat(response.getCostPrice()).isEqualByComparingTo("8.40");
+        assertThat(product.getCostPrice()).isEqualByComparingTo("8.40");
         assertThat(response.getStock()).isEqualTo(12);
         assertThat(product.getStock()).isEqualTo(12);
         verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
         verify(stockMovementRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void shouldPreserveExistingCostWhenUpdateDoesNotIncludeCostPrice() {
+        CategoryEntity category = CategoryEntity.builder()
+                .id(2L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now())
+                .build();
+        ProductEntity product = ProductEntity.builder()
+                .id(17L)
+                .barcode("78917")
+                .name("Suco")
+                .category(category)
+                .price(new BigDecimal("10.00"))
+                .costPrice(new BigDecimal("4.75"))
+                .stock(8)
+                .active(true)
+                .build();
+        ProductUpdateRequestDTO request = new ProductUpdateRequestDTO(
+                "78917", "Suco atualizado", 2L, new BigDecimal("11.00"), null);
+
+        when(productRepository.findById(17L)).thenReturn(Optional.of(product));
+        when(categoryRepository.findById(2L)).thenReturn(Optional.of(category));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.update(17L, request);
+
+        assertThat(response.getCostPrice()).isEqualByComparingTo("4.75");
+        assertThat(product.getCostPrice()).isEqualByComparingTo("4.75");
+    }
+
+    @Test
+    void shouldAllowProductWithoutKnownCostPrice() {
+        ProductRequestDTO request = new ProductRequestDTO();
+        request.setBarcode("7894900011519");
+        request.setName("Produto sem custo conhecido");
+        request.setCategoryId(2L);
+        request.setPrice(new BigDecimal("9.99"));
+        request.setStock(1);
+
+        CategoryEntity category = CategoryEntity.builder()
+                .id(2L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(productRepository.existsByBarcode("7894900011519")).thenReturn(false);
+        when(categoryRepository.findById(2L)).thenReturn(Optional.of(category));
+        when(productRepository.save(any(ProductEntity.class))).thenAnswer(invocation -> {
+            ProductEntity product = invocation.getArgument(0);
+            product.setId(3L);
+            return product;
+        });
+
+        ProductResponseDTO response = productService.create(request);
+
+        assertThat(response.getCostPrice()).isNull();
     }
 
     @Test
