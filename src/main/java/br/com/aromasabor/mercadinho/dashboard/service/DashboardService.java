@@ -5,6 +5,7 @@ import br.com.aromasabor.mercadinho.dashboard.dto.DashboardSummaryResponse;
 import br.com.aromasabor.mercadinho.dashboard.dto.RecentSaleResponse;
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesSummaryProjection;
+import br.com.aromasabor.mercadinho.sale.repository.projection.GrossProfitSummaryProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.RecentSaleProjection;
 import br.com.aromasabor.mercadinho.turn.entity.TurnEntity;
 import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
@@ -46,6 +47,13 @@ public class DashboardService {
         BigDecimal revenue = salesSummary == null || salesSummary.getTotalRevenue() == null
                 ? ZERO_MONEY
                 : salesSummary.getTotalRevenue();
+        GrossProfitSummaryProjection grossProfit = saleRepository.getGrossProfitSummary(start, end);
+        BigDecimal grossProfitKnownAmount = grossProfit == null || grossProfit.getGrossProfitKnownAmount() == null
+                ? ZERO_MONEY
+                : grossProfit.getGrossProfitKnownAmount();
+        long itemsWithoutHistoricalCost = grossProfit == null || grossProfit.getItemsWithoutHistoricalCost() == null
+                ? 0L
+                : grossProfit.getItemsWithoutHistoricalCost();
 
         List<RecentSaleResponse> recentSales = saleRepository
                 .findRecentSales(start, end, PageRequest.of(0, RECENT_SALES_LIMIT))
@@ -63,6 +71,9 @@ public class DashboardService {
         response.setRevenue(revenue);
         response.setSalesCount(salesCount);
         response.setAverageTicket(calculateAverageTicket(revenue, salesCount));
+        response.setGrossProfitKnownAmount(grossProfitKnownAmount);
+        response.setGrossProfitComplete(itemsWithoutHistoricalCost == 0);
+        response.setItemsWithoutHistoricalCost(itemsWithoutHistoricalCost);
         response.setCurrentTurn(currentTurn);
         response.setRecentSales(recentSales);
         return response;

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import br.com.aromasabor.mercadinho.dashboard.dto.DashboardSummaryResponse;
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesSummaryProjection;
+import br.com.aromasabor.mercadinho.sale.repository.projection.GrossProfitSummaryProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.RecentSaleProjection;
 import br.com.aromasabor.mercadinho.turn.entity.TurnEntity;
 import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
@@ -47,6 +48,8 @@ class DashboardServiceTest {
         start = date.atStartOfDay();
         end = date.plusDays(1).atStartOfDay();
         when(saleRepository.findRecentSales(start, end, PageRequest.of(0, 5))).thenReturn(List.of());
+        when(saleRepository.getGrossProfitSummary(start, end)).thenReturn(new ProfitSummary(
+                new BigDecimal("0.00"), 0L));
         when(turnRepository.findFirstByStatusOrderByOpenedAtDesc(TurnStatus.OPEN)).thenReturn(Optional.empty());
     }
 
@@ -63,12 +66,17 @@ class DashboardServiceTest {
         assertThat(response.getCurrentTurn()).isNull();
         assertThat(response.getRecentSales()).isEmpty();
         verify(saleRepository).getDailySummary(start, end);
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("0.00");
+        assertThat(response.getGrossProfitComplete()).isTrue();
+        assertThat(response.getItemsWithoutHistoricalCost()).isZero();
     }
 
     @Test
     void shouldReturnPersistedValueAsAverageForOneSale() {
         when(saleRepository.getDailySummary(start, end))
                 .thenReturn(new DailySummary(1L, new BigDecimal("12.35")));
+        when(saleRepository.getGrossProfitSummary(start, end))
+                .thenReturn(new ProfitSummary(new BigDecimal("4.35"), 0L));
         when(saleRepository.findRecentSales(start, end, PageRequest.of(0, 5)))
                 .thenReturn(List.of(recentSale(42L, start.plusHours(2), "12.35")));
 
@@ -77,11 +85,27 @@ class DashboardServiceTest {
         assertThat(response.getRevenue()).isEqualByComparingTo("12.35");
         assertThat(response.getSalesCount()).isEqualTo(1L);
         assertThat(response.getAverageTicket()).isEqualByComparingTo("12.35");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("4.35");
+        assertThat(response.getGrossProfitComplete()).isTrue();
         assertThat(response.getRecentSales()).singleElement()
                 .satisfies(sale -> {
                     assertThat(sale.getId()).isEqualTo(42L);
                     assertThat(sale.getTotal()).isEqualByComparingTo("12.35");
                 });
+    }
+
+    @Test
+    void shouldMarkDailyGrossProfitIncompleteWhenHistoricalCostsAreMissing() {
+        when(saleRepository.getDailySummary(start, end))
+                .thenReturn(new DailySummary(2L, new BigDecimal("20.00")));
+        when(saleRepository.getGrossProfitSummary(start, end))
+                .thenReturn(new ProfitSummary(new BigDecimal("3.50"), 2L));
+
+        DashboardSummaryResponse response = dashboardService.getSummary();
+
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("3.50");
+        assertThat(response.getGrossProfitComplete()).isFalse();
+        assertThat(response.getItemsWithoutHistoricalCost()).isEqualTo(2L);
     }
 
     @Test
@@ -157,6 +181,19 @@ class DashboardServiceTest {
         @Override
         public BigDecimal getTotalRevenue() {
             return totalRevenue;
+        }
+    }
+
+    private record ProfitSummary(BigDecimal grossProfitKnownAmount, Long itemsWithoutHistoricalCost)
+            implements GrossProfitSummaryProjection {
+        @Override
+        public BigDecimal getGrossProfitKnownAmount() {
+            return grossProfitKnownAmount;
+        }
+
+        @Override
+        public Long getItemsWithoutHistoricalCost() {
+            return itemsWithoutHistoricalCost;
         }
     }
 }

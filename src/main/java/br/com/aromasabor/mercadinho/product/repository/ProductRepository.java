@@ -21,7 +21,7 @@ public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
 
     List<ProductEntity> findByActiveFalseOrderByIdAsc();
 
-    List<ProductEntity> findByNameContainingIgnoreCase(String name);
+    List<ProductEntity> findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc(String name);
 
     @Query("""
             select p.id as id,

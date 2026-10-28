@@ -48,7 +48,9 @@ public class StockMovementEntity {
     @Column(name = "reason", length = 255)
     private String reason;
 
+    @Column(name = "discard_reason", length = 30)
+    private String discardReason;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 }
-

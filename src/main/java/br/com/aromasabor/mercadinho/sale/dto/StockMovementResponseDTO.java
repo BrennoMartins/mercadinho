@@ -19,7 +19,7 @@ public class StockMovementResponseDTO {
     @Schema(description = "Nome do produto", example = "Arroz")
     private final String productName;
 
-    @Schema(description = "Tipo da movimentação", allowableValues = {"SALE", "ENTRY", "ADJUSTMENT"})
+    @Schema(description = "Tipo da movimentação", allowableValues = {"SALE", "ENTRY", "ADJUSTMENT", "DISCARD"})
     private final String movementType;
 
     @Schema(description = "Quantidade movimentada; saídas de venda são negativas", example = "-2")
@@ -30,6 +30,9 @@ public class StockMovementResponseDTO {
 
     @Schema(description = "Motivo ou observação registrada", example = "Venda #15")
     private final String reason;
+
+    @Schema(description = "Motivo categorizado do descarte", example = "DAMAGED", nullable = true)
+    private final String discardReason;
 
     @Schema(description = "Identificador da venda relacionada, quando aplicável", example = "15", nullable = true)
     private final Long referenceSaleId;

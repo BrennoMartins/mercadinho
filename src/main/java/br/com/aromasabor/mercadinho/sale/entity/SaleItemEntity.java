@@ -45,7 +45,9 @@ public class SaleItemEntity {
     @Column(name = "unit_price", nullable = false, precision = 10, scale = 2)
     private BigDecimal unitPrice;
 
+    @Column(name = "unit_cost_price", precision = 10, scale = 2)
+    private BigDecimal unitCostPrice;
+
     @Column(name = "subtotal", nullable = false, precision = 10, scale = 2)
     private BigDecimal subtotal;
 }
-

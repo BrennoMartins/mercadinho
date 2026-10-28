@@ -137,6 +137,73 @@ class SalesReportConsistencyIT {
         }
     }
 
+    @Test
+    void shouldAggregateHistoricalGrossProfitForTheFullPeriodAndMarkMissingCosts() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime now = today.atTime(12, 0);
+        TurnEntity turn = turnRepository.saveAndFlush(TurnEntity.builder()
+                .id(UUID.randomUUID())
+                .openedAt(now.minusHours(1))
+                .operatorName("Operador")
+                .status(TurnStatus.OPEN)
+                .build());
+        ProductEntity withCost = productRepository.saveAndFlush(ProductEntity.builder()
+                .barcode("789000000010")
+                .name("Produto com custo")
+                .price(new BigDecimal("10.00"))
+                .costPrice(new BigDecimal("6.25"))
+                .stock(10)
+                .active(true)
+                .createdAt(now.minusDays(1))
+                .updatedAt(now.minusDays(1))
+                .build());
+        ProductEntity withoutCost = productRepository.saveAndFlush(ProductEntity.builder()
+                .barcode("789000000011")
+                .name("Produto sem custo")
+                .price(new BigDecimal("2.50"))
+                .costPrice(null)
+                .stock(10)
+                .active(true)
+                .createdAt(now.minusDays(1))
+                .updatedAt(now.minusDays(1))
+                .build());
+
+        saleService.create(new SaleRequestDTO(List.of(
+                new SaleItemRequestDTO(withCost.getId(), 2),
+                new SaleItemRequestDTO(withoutCost.getId(), 3))));
+
+        jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, total, created_at)
+                VALUES (?, 'CANCELLED', 1000.00, ?)
+                """, turn.getId(), now);
+        Long cancelledSaleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal, unit_cost_price)
+                VALUES (?, ?, 100, 10.00, 1000.00, 1.00)
+                """, cancelledSaleId, withCost.getId());
+
+        withCost.setCostPrice(new BigDecimal("1.00"));
+        withoutCost.setCostPrice(new BigDecimal("1.00"));
+        productRepository.saveAllAndFlush(List.of(withCost, withoutCost));
+
+        SalesReportResponse report = salesReportService.getReport(today.toString(), today.toString());
+
+        assertThat(report.getSalesCount()).isEqualTo(1L);
+        assertThat(report.getTotalRevenue()).isEqualByComparingTo("27.50");
+        assertThat(report.getGrossProfitKnownAmount()).isEqualByComparingTo("7.50");
+        assertThat(report.getGrossProfitComplete()).isFalse();
+        assertThat(report.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                "select si.unit_cost_price from sale_items si join sales s on s.id = si.sale_id "
+                        + "where si.product_id = ? and s.status = 'COMPLETED'",
+                BigDecimal.class,
+                withCost.getId())).isEqualByComparingTo("6.25");
+        assertThat(jdbcTemplate.queryForObject(
+                "select unit_cost_price from sale_items where product_id = ?",
+                BigDecimal.class,
+                withoutCost.getId())).isNull();
+    }
+
     static class ReportQueryBarrier {
 
         private volatile CountDownLatch summaryQueryCompleted;

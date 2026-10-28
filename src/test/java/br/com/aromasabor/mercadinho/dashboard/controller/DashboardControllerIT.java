@@ -44,6 +44,9 @@ class DashboardControllerIT {
                 new BigDecimal("45.50"),
                 2L,
                 new BigDecimal("22.75"),
+                new BigDecimal("12.00"),
+                true,
+                0L,
                 null,
                 List.of()));
 
@@ -53,6 +56,9 @@ class DashboardControllerIT {
                 .andExpect(jsonPath("$.revenue").value(45.50))
                 .andExpect(jsonPath("$.salesCount").value(2))
                 .andExpect(jsonPath("$.averageTicket").value(22.75))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(12.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(0))
                 .andExpect(jsonPath("$.currentTurn").hasJsonPath())
                 .andExpect(jsonPath("$.currentTurn").value(nullValue()))
                 .andExpect(jsonPath("$.recentSales").isArray())

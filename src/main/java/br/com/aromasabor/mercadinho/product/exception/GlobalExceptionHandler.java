@@ -6,6 +6,7 @@ import br.com.aromasabor.mercadinho.sale.exception.InvalidStockMovementFilterExc
 import br.com.aromasabor.mercadinho.sale.exception.SaleNotFoundException;
 import br.com.aromasabor.mercadinho.sale.exception.SaleWithoutItemsException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
+import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
 import br.com.aromasabor.mercadinho.report.exception.InvalidSalesReportPeriodException;
 import br.com.aromasabor.mercadinho.turn.exception.NoOpenTurnException;
 import br.com.aromasabor.mercadinho.turn.exception.TurnAlreadyOpenException;
@@ -87,6 +88,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(StockAdjustmentNotNeededException.class)
     public ResponseEntity<Map<String, String>> handleStockAdjustmentNotNeeded(
             StockAdjustmentNotNeededException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(InsufficientStockForDiscardException.class)
+    public ResponseEntity<Map<String, String>> handleInsufficientStockForDiscard(
+            InsufficientStockForDiscardException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("message", ex.getMessage()));
     }

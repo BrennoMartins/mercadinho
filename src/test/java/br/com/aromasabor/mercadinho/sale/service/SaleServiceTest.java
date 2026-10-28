@@ -53,7 +53,7 @@ class SaleServiceTest {
     @Test
     void shouldCreateSaleWhenTurnIsOpen() {
         TurnEntity openTurn = buildOpenTurn();
-        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10, "7.25");
         SaleRequestDTO request = new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 2)));
 
         when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
@@ -69,6 +69,9 @@ class SaleServiceTest {
         assertThat(response).isNotNull();
         assertThat(response.getStatus()).isEqualTo("COMPLETED");
         assertThat(response.getTotal()).isEqualByComparingTo("25.00");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("10.50");
+        assertThat(response.getGrossProfitComplete()).isTrue();
+        assertThat(response.getItemsWithoutHistoricalCost()).isZero();
         assertThat(response.getItems()).hasSize(1);
     }
 
@@ -109,8 +112,8 @@ class SaleServiceTest {
     @Test
     void shouldCalculateTotalAndCreateSaleItemsCorrectly() {
         TurnEntity openTurn = buildOpenTurn();
-        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
-        ProductEntity beans = buildProduct(2L, "Feijao", "9.00", 10);
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10, "8.00");
+        ProductEntity beans = buildProduct(2L, "Feijao", "9.00", 10, "4.50");
         SaleRequestDTO request = new SaleRequestDTO(List.of(
                 new SaleItemRequestDTO(1L, 2),
                 new SaleItemRequestDTO(2L, 3)
@@ -125,11 +128,36 @@ class SaleServiceTest {
         });
 
         SaleResponseDTO response = saleService.create(request);
+        ArgumentCaptor<SaleEntity> saleCaptor = ArgumentCaptor.forClass(SaleEntity.class);
+        verify(saleRepository).save(saleCaptor.capture());
 
         assertThat(response.getTotal()).isEqualByComparingTo("52.00");
         assertThat(response.getItems()).hasSize(2);
         assertThat(response.getItems().get(0).getSubtotal()).isEqualByComparingTo("25.00");
         assertThat(response.getItems().get(1).getSubtotal()).isEqualByComparingTo("27.00");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("22.50");
+        assertThat(response.getGrossProfitComplete()).isTrue();
+        assertThat(response.getItemsWithoutHistoricalCost()).isZero();
+        assertThat(response.getTotal()).isEqualByComparingTo("52.00");
+        assertThat(saleCaptor.getValue().getItems()).extracting(item -> item.getUnitCostPrice())
+                .containsExactly(new BigDecimal("8.00"), new BigDecimal("4.50"));
+    }
+
+    @Test
+    void shouldReportKnownGrossProfitAsIncompleteWhenProductHasNoCost() {
+        TurnEntity openTurn = buildOpenTurn();
+        ProductEntity product = buildProduct(9L, "Produto sem custo", "5.00", 10);
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(product));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        SaleResponseDTO response = saleService.create(
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(9L, 3))));
+
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("0.00");
+        assertThat(response.getGrossProfitComplete()).isFalse();
+        assertThat(response.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+        assertThat(response.getTotal()).isEqualByComparingTo("15.00");
     }
 
     @Test
@@ -170,11 +198,16 @@ class SaleServiceTest {
     }
 
     private ProductEntity buildProduct(Long id, String name, String price, Integer stock) {
+        return buildProduct(id, name, price, stock, null);
+    }
+
+    private ProductEntity buildProduct(Long id, String name, String price, Integer stock, String costPrice) {
         return ProductEntity.builder()
                 .id(id)
                 .barcode("789" + id)
                 .name(name)
                 .price(new BigDecimal(price))
+                .costPrice(costPrice == null ? null : new BigDecimal(costPrice))
                 .stock(stock)
                 .active(true)
                 .createdAt(LocalDateTime.now().minusDays(1))

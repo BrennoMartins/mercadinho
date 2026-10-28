@@ -32,6 +32,15 @@ public class SalesReportResponse {
             example = "29.39")
     private BigDecimal averageTicket;
 
+    @Schema(description = "Lucro bruto calculado apenas para itens com custo histórico conhecido")
+    private BigDecimal grossProfitKnownAmount;
+
+    @Schema(description = "Indica se todos os itens concluídos do período possuem custo histórico")
+    private Boolean grossProfitComplete;
+
+    @Schema(description = "Quantidade de itens de venda sem custo histórico no período")
+    private Long itemsWithoutHistoricalCost;
+
     @Schema(description = "Série diária completa em ordem cronológica, incluindo dias sem vendas")
     private List<DailySalesReportEntry> dailySales;
 }

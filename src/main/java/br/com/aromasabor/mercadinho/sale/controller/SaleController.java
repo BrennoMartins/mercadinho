@@ -38,18 +38,21 @@ public class SaleController {
     }
 
     @GetMapping
-    @Operation(summary = "Listar vendas")
+    @Operation(summary = "Listar vendas",
+            description = "Retorna vendas em ordem cronológica decrescente com lucro bruto conhecido e " +
+                    "indicador de completude do custo histórico.")
     @ApiResponse(responseCode = "200", description = "Vendas listadas com sucesso")
     public List<SaleResponseDTO> findAll() {
         return saleService.findAll();
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Buscar venda por ID")
+    @Operation(summary = "Buscar venda por ID",
+            description = "Retorna detalhes históricos da venda e lucro bruto calculado com custos " +
+                    "unitários registrados no momento da venda.")
     @ApiResponse(responseCode = "200", description = "Venda encontrada")
     @ApiResponse(responseCode = "404", description = "Venda não encontrada")
     public SaleResponseDTO findById(@PathVariable Long id) {
         return saleService.findById(id);
     }
 }
-

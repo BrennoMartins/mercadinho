@@ -11,6 +11,7 @@ import br.com.aromasabor.mercadinho.report.exception.InvalidSalesReportPeriodExc
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesReportProjection;
 import br.com.aromasabor.mercadinho.sale.repository.projection.DailySalesSummaryProjection;
+import br.com.aromasabor.mercadinho.sale.repository.projection.GrossProfitSummaryProjection;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -39,6 +40,8 @@ class SalesReportServiceTest {
         LocalDateTime start = LocalDate.of(2026, 10, 1).atStartOfDay();
         LocalDateTime end = LocalDate.of(2026, 10, 5).atStartOfDay();
         when(saleRepository.getDailySummary(start, end)).thenReturn(new SalesSummary(3L, new BigDecimal("61.00")));
+        when(saleRepository.getGrossProfitSummary(start, end))
+                .thenReturn(new ProfitSummary(new BigDecimal("24.00"), 1L));
         when(saleRepository.getDailySalesReport(start, end)).thenReturn(List.of(
                 dailySummary(LocalDate.of(2026, 10, 1), 2L, "40.00"),
                 dailySummary(LocalDate.of(2026, 10, 3), 1L, "21.00")));
@@ -50,6 +53,9 @@ class SalesReportServiceTest {
         assertThat(response.getTotalRevenue()).isEqualByComparingTo("61.00");
         assertThat(response.getSalesCount()).isEqualTo(3L);
         assertThat(response.getAverageTicket()).isEqualByComparingTo("20.33");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("24.00");
+        assertThat(response.getGrossProfitComplete()).isFalse();
+        assertThat(response.getItemsWithoutHistoricalCost()).isEqualTo(1L);
         assertThat(response.getDailySales()).hasSize(4);
         assertThat(response.getDailySales()).extracting(entry -> entry.getDate())
                 .containsExactly(
@@ -74,6 +80,8 @@ class SalesReportServiceTest {
         LocalDateTime start = LocalDate.of(2026, 10, 8).atStartOfDay();
         LocalDateTime end = LocalDate.of(2026, 10, 10).atStartOfDay();
         when(saleRepository.getDailySummary(start, end)).thenReturn(new SalesSummary(0L, BigDecimal.ZERO));
+        when(saleRepository.getGrossProfitSummary(start, end))
+                .thenReturn(new ProfitSummary(BigDecimal.ZERO, 0L));
         when(saleRepository.getDailySalesReport(start, end)).thenReturn(List.of());
 
         SalesReportResponse response = salesReportService.getReport("2026-10-08", "2026-10-09");
@@ -81,6 +89,9 @@ class SalesReportServiceTest {
         assertThat(response.getTotalRevenue()).isEqualByComparingTo("0.00");
         assertThat(response.getSalesCount()).isZero();
         assertThat(response.getAverageTicket()).isEqualByComparingTo("0.00");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("0.00");
+        assertThat(response.getGrossProfitComplete()).isTrue();
+        assertThat(response.getItemsWithoutHistoricalCost()).isZero();
         assertThat(response.getDailySales()).hasSize(2)
                 .allSatisfy(entry -> {
                     assertThat(entry.getRevenue()).isEqualByComparingTo("0.00");
@@ -93,6 +104,8 @@ class SalesReportServiceTest {
         LocalDateTime start = LocalDate.of(2026, 10, 9).atStartOfDay();
         LocalDateTime end = LocalDate.of(2026, 10, 10).atStartOfDay();
         when(saleRepository.getDailySummary(start, end)).thenReturn(new SalesSummary(1L, new BigDecimal("7.25")));
+        when(saleRepository.getGrossProfitSummary(start, end))
+                .thenReturn(new ProfitSummary(new BigDecimal("2.25"), 0L));
         when(saleRepository.getDailySalesReport(start, end))
                 .thenReturn(List.of(dailySummary(LocalDate.of(2026, 10, 9), 1L, "7.25")));
 
@@ -101,6 +114,7 @@ class SalesReportServiceTest {
         assertThat(response.getDailySales()).hasSize(1);
         assertThat(response.getDailySales().get(0).getDate()).isEqualTo(LocalDate.of(2026, 10, 9));
         assertThat(response.getAverageTicket()).isEqualByComparingTo("7.25");
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("2.25");
     }
 
     @Test
@@ -160,6 +174,19 @@ class SalesReportServiceTest {
         @Override
         public BigDecimal getTotalRevenue() {
             return totalRevenue;
+        }
+    }
+
+    private record ProfitSummary(BigDecimal grossProfitKnownAmount, Long itemsWithoutHistoricalCost)
+            implements GrossProfitSummaryProjection {
+        @Override
+        public BigDecimal getGrossProfitKnownAmount() {
+            return grossProfitKnownAmount;
+        }
+
+        @Override
+        public Long getItemsWithoutHistoricalCost() {
+            return itemsWithoutHistoricalCost;
         }
     }
 }

@@ -19,5 +19,7 @@ public class SaleResponseDTO {
     private String status;
     private LocalDateTime createdAt;
     private List<SaleItemResponseDTO> items;
+    private BigDecimal grossProfitKnownAmount;
+    private Boolean grossProfitComplete;
+    private Long itemsWithoutHistoricalCost;
 }
-

@@ -4,7 +4,9 @@ import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.StockDiscardRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
+import br.com.aromasabor.mercadinho.sale.dto.StockMovementResponseDTO;
 import br.com.aromasabor.mercadinho.product.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -77,7 +79,9 @@ public class ProductController {
     }
 
     @GetMapping("/search")
-    @Operation(summary = "Buscar produtos por nome")
+    @Operation(summary = "Buscar produtos ativos por nome",
+            description = "Pesquisa parcial sem distinção entre maiúsculas/minúsculas e retorna no máximo "
+                    + "dez produtos em ordem alfabética.")
     @ApiResponse(responseCode = "200", description = "Produtos encontrados")
     public List<ProductResponseDTO> searchByName(@RequestParam String name) {
         return productService.searchByName(name);
@@ -136,5 +140,18 @@ public class ProductController {
     public ProductResponseDTO adjustStock(@PathVariable Long id,
                                           @Valid @RequestBody StockAdjustmentRequestDTO request) {
         return productService.adjustStock(id, request);
+    }
+
+    @PostMapping("/{id}/discards")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Registrar descarte de estoque",
+            description = "Reduz o estoque e registra o motivo e a observação no histórico de movimentações.")
+    @ApiResponse(responseCode = "201", description = "Descarte registrado com sucesso")
+    @ApiResponse(responseCode = "400", description = "Quantidade ou motivo inválido")
+    @ApiResponse(responseCode = "404", description = "Produto não encontrado")
+    @ApiResponse(responseCode = "409", description = "Quantidade superior ao estoque disponível")
+    public StockMovementResponseDTO discardStock(@PathVariable Long id,
+                                                 @Valid @RequestBody StockDiscardRequestDTO request) {
+        return productService.discardStock(id, request);
     }
 }
