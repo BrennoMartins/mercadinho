@@ -127,6 +127,86 @@ class StockMovementControllerDbIT {
     }
 
     @Test
+    void shouldPersistCostPriceAndPreserveItWhenOmittedFromProductUpdate() throws Exception {
+        mockMvc.perform(post("/api/products")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000112",
+                                  "name": "Café especial",
+                                  "categoryId": 1,
+                                  "price": 12.50,
+                                  "costPrice": 7.25,
+                                  "stock": 10
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("CAFÉ ESPECIAL"))
+                .andExpect(jsonPath("$.price").value(12.50))
+                .andExpect(jsonPath("$.costPrice").value(7.25))
+                .andExpect(jsonPath("$.stock").value(10));
+
+        ProductEntity product = productRepository.findByBarcode("789000000112").orElseThrow();
+        assertThat(jdbcTemplate.queryForObject(
+                "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                .isEqualByComparingTo("7.25");
+
+        mockMvc.perform(put("/api/products/" + product.getId())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000112",
+                                  "name": "Café especial premium",
+                                  "categoryId": 1,
+                                  "price": 14.00,
+                                  "costPrice": 8.40
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("CAFÉ ESPECIAL PREMIUM"))
+                .andExpect(jsonPath("$.costPrice").value(8.40))
+                .andExpect(jsonPath("$.stock").value(10));
+
+        mockMvc.perform(put("/api/products/" + product.getId())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "barcode": "789000000112",
+                                  "name": "Café especial revisado",
+                                  "categoryId": 1,
+                                  "price": 15.00
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.costPrice").value(8.40));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                .isEqualByComparingTo("8.40");
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId()))
+                .isEqualTo(10);
+        assertThat(jdbcTemplate.queryForObject(
+                "select category_id from products where id = ?", Long.class, product.getId()))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void shouldReturnNullCostPriceForExistingProductsWithoutRecordedCost() throws Exception {
+        ProductEntity product = createProduct("789000000113", "Biscoito");
+
+        var response = mockMvc.perform(get("/api/products/" + product.getId()))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        assertThat(objectMapper.readTree(response.getResponse().getContentAsString()).get("costPrice").isNull())
+                .isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                .isNull();
+    }
+
+    @Test
     void shouldPreserveStockAndSaleHistoryAcrossReplenishmentSaleCatalogEditAndAdjustment() throws Exception {
         ProductEntity product = createProduct("789000000111", "Biscoito");
         openTurn();
@@ -421,7 +501,7 @@ class StockMovementControllerDbIT {
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name").value("Biscoito integral"))
+                .andExpect(jsonPath("$.name").value("BISCOITO INTEGRAL"))
                 .andExpect(jsonPath("$.stock").value(10));
 
         assertThat(jdbcTemplate.queryForObject(

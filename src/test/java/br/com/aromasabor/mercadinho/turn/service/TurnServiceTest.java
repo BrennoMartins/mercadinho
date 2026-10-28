@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentCaptor.forClass;
 
 import br.com.aromasabor.mercadinho.turn.dto.CloseTurnRequest;
 import br.com.aromasabor.mercadinho.turn.dto.CloseTurnResponse;
@@ -102,6 +103,46 @@ class TurnServiceTest {
         assertThat(response.getClosedAt()).isNotNull();
         assertThat(response.getDurationInMinutes()).isGreaterThanOrEqualTo(120L);
         assertThat(response.getClosingNote()).isEqualTo("Fechamento do dia.");
+    }
+
+    @Test
+    void shouldCloseTurnAndPersistNullWhenClosingNoteIsAbsent() {
+        UUID id = UUID.randomUUID();
+        TurnEntity openTurn = TurnEntity.builder()
+                .id(id)
+                .openedAt(LocalDateTime.now().minusHours(2))
+                .operatorName("Maria")
+                .status(TurnStatus.OPEN)
+                .build();
+
+        when(turnRepository.findByIdAndStatusForUpdate(id, TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(turnRepository.save(any(TurnEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CloseTurnResponse response = turnService.close(id, new CloseTurnRequest(null));
+
+        var savedTurn = forClass(TurnEntity.class);
+        verify(turnRepository).save(savedTurn.capture());
+        assertThat(savedTurn.getValue().getClosingNote()).isNull();
+        assertThat(response.getClosingNote()).isNull();
+        assertThat(response.getStatus()).isEqualTo(TurnStatus.CLOSED);
+    }
+
+    @Test
+    void shouldNormalizeBlankClosingNoteToNull() {
+        UUID id = UUID.randomUUID();
+        TurnEntity openTurn = TurnEntity.builder()
+                .id(id)
+                .openedAt(LocalDateTime.now().minusHours(2))
+                .operatorName("Maria")
+                .status(TurnStatus.OPEN)
+                .build();
+
+        when(turnRepository.findByIdAndStatusForUpdate(id, TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(turnRepository.save(any(TurnEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CloseTurnResponse response = turnService.close(id, new CloseTurnRequest("   "));
+
+        assertThat(response.getClosingNote()).isNull();
     }
 
     @Test

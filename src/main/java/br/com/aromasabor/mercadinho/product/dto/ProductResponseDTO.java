@@ -18,9 +18,9 @@ public class ProductResponseDTO {
     private String name;
     private CategoryResponseDTO category;
     private BigDecimal price;
+    private BigDecimal costPrice;
     private Integer stock;
     private Boolean active;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }
-

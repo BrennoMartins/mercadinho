@@ -3,6 +3,7 @@ package br.com.aromasabor.mercadinho.product.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Digits;
 import java.math.BigDecimal;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -27,6 +28,10 @@ public class ProductRequestDTO {
     @NotNull(message = "é obrigatório")
     @PositiveOrZero(message = "deve ser maior ou igual a zero")
     private BigDecimal price;
+
+    @PositiveOrZero(message = "deve ser maior ou igual a zero")
+    @Digits(integer = 8, fraction = 2, message = "deve ter no máximo 8 dígitos inteiros e 2 decimais")
+    private BigDecimal costPrice;
 
     @NotNull(message = "é obrigatório")
     @PositiveOrZero(message = "deve ser maior ou igual a zero")

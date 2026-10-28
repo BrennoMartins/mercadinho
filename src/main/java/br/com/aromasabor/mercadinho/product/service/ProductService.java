@@ -19,6 +19,7 @@ import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
 import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,9 +53,10 @@ public class ProductService {
 
         ProductEntity product = ProductEntity.builder()
                 .barcode(request.getBarcode())
-                .name(request.getName())
+                .name(request.getName().toUpperCase(Locale.ROOT))
                 .category(category)
                 .price(request.getPrice())
+                .costPrice(request.getCostPrice())
                 .stock(request.getStock())
                 .active(true)
                 .createdAt(now)
@@ -114,7 +116,7 @@ public class ProductService {
         }
 
         if (request.getName() != null && !request.getName().isBlank()) {
-            product.setName(request.getName());
+            product.setName(request.getName().toUpperCase(Locale.ROOT));
         }
 
         if (request.getCategoryId() != null) {
@@ -125,6 +127,10 @@ public class ProductService {
 
         if (request.getPrice() != null) {
             product.setPrice(request.getPrice());
+        }
+
+        if (request.getCostPrice() != null) {
+            product.setCostPrice(request.getCostPrice());
         }
 
         product.setUpdatedAt(LocalDateTime.now());
@@ -242,6 +248,7 @@ public class ProductService {
         response.setBarcode(product.getBarcode());
         response.setName(product.getName());
         response.setPrice(product.getPrice());
+        response.setCostPrice(product.getCostPrice());
         response.setStock(product.getStock());
         response.setActive(product.getActive());
         response.setCreatedAt(product.getCreatedAt());
