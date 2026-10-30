@@ -54,6 +54,13 @@ public class GlobalExceptionHandler {
                 .body(Map.of("message", ex.getMessage()));
     }
 
+    @ExceptionHandler(InvalidProductCatalogQueryException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidProductCatalogQuery(
+            InvalidProductCatalogQueryException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
     @ExceptionHandler(SaleNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleSaleNotFound(SaleNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)

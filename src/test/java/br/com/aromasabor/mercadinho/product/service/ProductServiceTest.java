@@ -3,10 +3,12 @@ package br.com.aromasabor.mercadinho.product.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import br.com.aromasabor.mercadinho.product.dto.ProductCatalogResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
@@ -17,6 +19,7 @@ import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
+import br.com.aromasabor.mercadinho.product.exception.InvalidProductCatalogQueryException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
@@ -30,6 +33,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -195,6 +201,62 @@ class ProductServiceTest {
 
         verify(productRepository, never())
                 .findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc(any());
+    }
+
+    @Test
+    void shouldSearchCatalogWithEscapedNameAndExactBarcodeAndReturnPageMetadata() {
+        ProductEntity product = ProductEntity.builder()
+                .id(8L)
+                .barcode("00123")
+                .name("Produto 100% Natural")
+                .price(new BigDecimal("14.50"))
+                .stock(6)
+                .active(true)
+                .build();
+        PageRequest pageable = PageRequest.of(
+                0, 5, Sort.by(Sort.Order.asc("name"), Sort.Order.asc("id")));
+        when(productRepository.searchCatalog("100!% Natural", "100% Natural", 4L, true, pageable))
+                .thenReturn(new PageImpl<>(List.of(product), pageable, 7));
+
+        ProductCatalogResponseDTO response = productService.searchCatalog("  100% Natural  ", 4L, true, 0, 5);
+
+        assertThat(response.getContent()).extracting(ProductResponseDTO::getId).containsExactly(8L);
+        assertThat(response.getPage()).isZero();
+        assertThat(response.getSize()).isEqualTo(5);
+        assertThat(response.getTotalElements()).isEqualTo(7);
+        assertThat(response.getTotalPages()).isEqualTo(2);
+    }
+
+    @Test
+    void shouldRejectInvalidCatalogParametersBeforeQueryingRepository() {
+        assertThatThrownBy(() -> productService.searchCatalog("  ", null, true, 0, 20))
+                .isInstanceOf(InvalidProductCatalogQueryException.class)
+                .hasMessageContaining("search");
+        assertThatThrownBy(() -> productService.searchCatalog("name", 0L, true, 0, 20))
+                .isInstanceOf(InvalidProductCatalogQueryException.class)
+                .hasMessageContaining("categoryId");
+        assertThatThrownBy(() -> productService.searchCatalog("name", null, true, -1, 20))
+                .isInstanceOf(InvalidProductCatalogQueryException.class)
+                .hasMessageContaining("page");
+        assertThatThrownBy(() -> productService.searchCatalog("name", null, true, 0, 101))
+                .isInstanceOf(InvalidProductCatalogQueryException.class)
+                .hasMessageContaining("size");
+
+        verify(productRepository, never())
+                .searchCatalog(any(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    void shouldAllowMaximumCatalogPageSize() {
+        PageRequest pageable = PageRequest.of(
+                0, 100, Sort.by(Sort.Order.asc("name"), Sort.Order.asc("id")));
+        when(productRepository.searchCatalog("name", "name", null, false, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        ProductCatalogResponseDTO response = productService.searchCatalog("name", null, false, 0, 100);
+
+        assertThat(response.getSize()).isEqualTo(100);
+        assertThat(response.getTotalElements()).isZero();
     }
 
     @Test

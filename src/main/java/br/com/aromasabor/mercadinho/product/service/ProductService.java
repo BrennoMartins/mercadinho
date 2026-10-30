@@ -3,6 +3,7 @@ package br.com.aromasabor.mercadinho.product.service;
 import br.com.aromasabor.mercadinho.product.dto.CategoryResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.ProductCatalogResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockDiscardRequestDTO;
@@ -12,6 +13,7 @@ import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
+import br.com.aromasabor.mercadinho.product.exception.InvalidProductCatalogQueryException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
@@ -24,6 +26,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +38,7 @@ public class ProductService {
     private static final String MOVEMENT_TYPE_ENTRY = "ENTRY";
     private static final String MOVEMENT_TYPE_ADJUSTMENT = "ADJUSTMENT";
     private static final String MOVEMENT_TYPE_DISCARD = "DISCARD";
+    private static final int PRODUCT_CATALOG_MAX_SIZE = 100;
 
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
@@ -110,6 +116,43 @@ public class ProductService {
                 .stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ProductCatalogResponseDTO searchCatalog(
+            String search, Long categoryId, boolean active, int page, int size) {
+        if (search == null || search.isBlank()) {
+            throw new InvalidProductCatalogQueryException("O parâmetro search não pode estar vazio.");
+        }
+        if (categoryId != null && categoryId < 1) {
+            throw new InvalidProductCatalogQueryException("O parâmetro categoryId deve ser maior que zero.");
+        }
+        if (page < 0) {
+            throw new InvalidProductCatalogQueryException("O parâmetro page deve ser maior ou igual a zero.");
+        }
+        if (size < 1 || size > PRODUCT_CATALOG_MAX_SIZE) {
+            throw new InvalidProductCatalogQueryException(
+                    "O parâmetro size deve estar entre 1 e " + PRODUCT_CATALOG_MAX_SIZE + ".");
+        }
+
+        String normalizedSearch = search.trim();
+        String escapedNameSearch = normalizedSearch
+                .replace("!", "!!")
+                .replace("%", "!%")
+                .replace("_", "!_");
+        Page<ProductEntity> resultPage = productRepository.searchCatalog(
+                escapedNameSearch,
+                normalizedSearch,
+                categoryId,
+                active,
+                PageRequest.of(page, size, Sort.by(Sort.Order.asc("name"), Sort.Order.asc("id"))));
+
+        return new ProductCatalogResponseDTO(
+                resultPage.getContent().stream().map(this::toResponse).toList(),
+                resultPage.getNumber(),
+                resultPage.getSize(),
+                resultPage.getTotalElements(),
+                resultPage.getTotalPages());
     }
 
     @Transactional

@@ -15,12 +15,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.ProductCatalogResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockReplenishmentRequestDTO;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.GlobalExceptionHandler;
+import br.com.aromasabor.mercadinho.product.exception.InvalidProductCatalogQueryException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
@@ -227,6 +229,50 @@ class ProductControllerIT {
         mockMvc.perform(get("/api/products/search").param("name", "coca"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("Coca-Cola 2L"));
+    }
+
+    @Test
+    void shouldReturnAdministrativeCatalogWithDefaultPagination() throws Exception {
+        ProductResponseDTO product = new ProductResponseDTO();
+        product.setId(5L);
+        product.setBarcode("00123");
+        product.setName("Produto");
+        product.setActive(true);
+        ProductCatalogResponseDTO response =
+                new ProductCatalogResponseDTO(List.of(product), 0, 20, 1, 1);
+        when(productService.searchCatalog("produto", null, true, 0, 20)).thenReturn(response);
+
+        mockMvc.perform(get("/api/products/catalog")
+                        .param("search", "produto")
+                        .param("active", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].barcode").value("00123"))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(20))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1));
+
+        verify(productService).searchCatalog("produto", null, true, 0, 20);
+    }
+
+    @Test
+    void shouldRejectInvalidCatalogSearchAndMissingRequiredParameters() throws Exception {
+        when(productService.searchCatalog(" ", null, false, 0, 20))
+                .thenThrow(new InvalidProductCatalogQueryException("O parâmetro search não pode estar vazio."));
+
+        mockMvc.perform(get("/api/products/catalog")
+                        .param("search", " ")
+                        .param("active", "false"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("O parâmetro search não pode estar vazio."));
+
+        mockMvc.perform(get("/api/products/catalog")
+                        .param("search", "produto"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/products/catalog")
+                        .param("active", "true"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
