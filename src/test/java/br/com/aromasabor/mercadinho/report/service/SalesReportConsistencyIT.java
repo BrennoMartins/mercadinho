@@ -102,8 +102,8 @@ class SalesReportConsistencyIT {
                 .updatedAt(now.minusDays(1))
                 .build());
         jdbcTemplate.update("""
-                INSERT INTO sales (turn_id, status, total, created_at)
-                VALUES (?, 'COMPLETED', 10.00, ?)
+                INSERT INTO sales (turn_id, status, subtotal, total, created_at)
+                VALUES (?, 'COMPLETED', 10.00, 10.00, ?)
                 """, turn.getId(), now);
 
         CountDownLatch summaryQueryCompleted = new CountDownLatch(1);
@@ -173,8 +173,8 @@ class SalesReportConsistencyIT {
                 new SaleItemRequestDTO(withoutCost.getId(), 3))));
 
         jdbcTemplate.update("""
-                INSERT INTO sales (turn_id, status, total, created_at)
-                VALUES (?, 'CANCELLED', 1000.00, ?)
+                INSERT INTO sales (turn_id, status, subtotal, total, created_at)
+                VALUES (?, 'CANCELLED', 1000.00, 1000.00, ?)
                 """, turn.getId(), now);
         Long cancelledSaleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
         jdbcTemplate.update("""

@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -36,6 +37,13 @@ public class SaleEntity {
     @Column(name = "id")
     private Long id;
 
+    @Column(name = "subtotal", nullable = false, precision = 10, scale = 2)
+    private BigDecimal subtotal;
+
+    @Column(name = "discount_amount", nullable = false, precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
     @Column(name = "total", nullable = false, precision = 10, scale = 2)
     private BigDecimal total;
 
@@ -52,6 +60,16 @@ public class SaleEntity {
     @OneToMany(mappedBy = "sale", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @Builder.Default
     private List<SaleItemEntity> items = new ArrayList<>();
+
+    @PrePersist
+    void applyMoneyDefaults() {
+        if (discountAmount == null) {
+            discountAmount = BigDecimal.ZERO;
+        }
+        if (subtotal == null && total != null) {
+            subtotal = total.add(discountAmount);
+        }
+    }
 
     public void addItem(SaleItemEntity item) {
         items.add(item);

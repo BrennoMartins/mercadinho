@@ -31,6 +31,8 @@ public final class SaleGrossProfitCalculator {
             knownAmount = knownAmount.add(unitGrossProfit.multiply(BigDecimal.valueOf(item.getQuantity())));
         }
 
-        return new GrossProfitSummary(knownAmount, itemsWithoutHistoricalCost);
+        BigDecimal discount = sale.getDiscountAmount() == null ? ZERO_MONEY : sale.getDiscountAmount();
+        // The general discount is deducted once per sale; it may make the known profit negative.
+        return new GrossProfitSummary(knownAmount.subtract(discount), itemsWithoutHistoricalCost);
     }
 }

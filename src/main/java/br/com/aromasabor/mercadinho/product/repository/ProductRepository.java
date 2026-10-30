@@ -6,6 +6,8 @@ import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -22,6 +24,34 @@ public interface ProductRepository extends JpaRepository<ProductEntity, Long> {
     List<ProductEntity> findByActiveFalseOrderByIdAsc();
 
     List<ProductEntity> findTop10ByActiveTrueAndNameContainingIgnoreCaseOrderByNameAscIdAsc(String name);
+
+    @Query(
+            value = """
+                    select p
+                    from ProductEntity p
+                    where p.active = :active
+                      and (:categoryId is null or p.category.id = :categoryId)
+                      and (
+                          lower(p.name) like lower(concat('%', :nameSearch, '%')) escape '!'
+                          or p.barcode = :barcodeSearch
+                      )
+                    """,
+            countQuery = """
+                    select count(p)
+                    from ProductEntity p
+                    where p.active = :active
+                      and (:categoryId is null or p.category.id = :categoryId)
+                      and (
+                          lower(p.name) like lower(concat('%', :nameSearch, '%')) escape '!'
+                          or p.barcode = :barcodeSearch
+                      )
+                    """)
+    Page<ProductEntity> searchCatalog(
+            @Param("nameSearch") String nameSearch,
+            @Param("barcodeSearch") String barcodeSearch,
+            @Param("categoryId") Long categoryId,
+            @Param("active") boolean active,
+            Pageable pageable);
 
     @Query("""
             select p.id as id,

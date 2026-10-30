@@ -1,6 +1,7 @@
 package br.com.aromasabor.mercadinho.product.controller;
 
 import br.com.aromasabor.mercadinho.product.dto.ProductRequestDTO;
+import br.com.aromasabor.mercadinho.product.dto.ProductCatalogResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductResponseDTO;
 import br.com.aromasabor.mercadinho.product.dto.ProductUpdateRequestDTO;
 import br.com.aromasabor.mercadinho.product.dto.StockAdjustmentRequestDTO;
@@ -85,6 +86,22 @@ public class ProductController {
     @ApiResponse(responseCode = "200", description = "Produtos encontrados")
     public List<ProductResponseDTO> searchByName(@RequestParam String name) {
         return productService.searchByName(name);
+    }
+
+    @GetMapping("/catalog")
+    @Operation(
+            summary = "Consultar catálogo administrativo de produtos",
+            description = "Pesquisa produtos ativos ou inativos por trecho do nome ou código de barras exato, "
+                    + "com filtros por categoria e paginação.")
+    @ApiResponse(responseCode = "200", description = "Página de produtos retornada")
+    @ApiResponse(responseCode = "400", description = "Parâmetros de consulta inválidos")
+    public ProductCatalogResponseDTO searchCatalog(
+            @RequestParam("search") String search,
+            @RequestParam("active") boolean active,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        return productService.searchCatalog(search, categoryId, active, page, size);
     }
 
     @PutMapping("/{id}")
