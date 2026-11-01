@@ -48,9 +48,21 @@ public class GlobalExceptionHandler {
                 .body(Map.of("message", ex.getMessage()));
     }
 
+    @ExceptionHandler(CategoryHasProductsException.class)
+    public ResponseEntity<Map<String, String>> handleCategoryHasProducts(CategoryHasProductsException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
     @ExceptionHandler(ProductNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleProductNotFound(ProductNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ProductCostNotDefinedException.class)
+    public ResponseEntity<Map<String, String>> handleProductCostNotDefined(ProductCostNotDefinedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("message", ex.getMessage()));
     }
 

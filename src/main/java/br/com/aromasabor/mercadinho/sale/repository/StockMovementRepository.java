@@ -19,6 +19,7 @@ public interface StockMovementRepository extends JpaRepository<StockMovementEnti
                         product.name,
                         movement.movementType,
                         movement.quantity,
+                        movement.stockAfter,
                         movement.createdAt,
                         movement.reason,
                         movement.discardReason,

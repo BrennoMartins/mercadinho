@@ -22,6 +22,7 @@ import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
 import br.com.aromasabor.mercadinho.turn.repository.TurnRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +88,7 @@ public class SaleService {
                 .build();
 
         BigDecimal subtotal = BigDecimal.ZERO;
+        List<StockMovementEntity> stockMovements = new ArrayList<>();
 
         for (SaleItemRequestDTO requestedItem : request.getItems()) {
             ProductEntity product = productsById.get(requestedItem.getProductId());
@@ -112,6 +114,13 @@ public class SaleService {
 
             sale.addItem(saleItem);
             product.setStock(product.getStock() - requestedItem.getQuantity());
+            stockMovements.add(StockMovementEntity.builder()
+                    .product(product)
+                    .movementType(MOVEMENT_TYPE_SALE)
+                    .quantity(-requestedItem.getQuantity())
+                    .stockAfter(product.getStock())
+                    .createdAt(now)
+                    .build());
         }
 
         if (discountAmount.compareTo(subtotal) > 0) {
@@ -123,16 +132,10 @@ public class SaleService {
         sale.setTotal(subtotal.subtract(discountAmount));
         SaleEntity savedSale = saleRepository.save(sale);
 
-        List<StockMovementEntity> stockMovements = savedSale.getItems().stream()
-                .map(item -> StockMovementEntity.builder()
-                        .product(item.getProduct())
-                        .movementType(MOVEMENT_TYPE_SALE)
-                        .quantity(-item.getQuantity())
-                        .referenceSale(savedSale)
-                        .reason("Venda #" + savedSale.getId())
-                        .createdAt(now)
-                        .build())
-                .toList();
+        stockMovements.forEach(movement -> {
+            movement.setReferenceSale(savedSale);
+            movement.setReason("Venda #" + savedSale.getId());
+        });
 
         productRepository.saveAll(productsById.values());
         stockMovementRepository.saveAll(stockMovements);

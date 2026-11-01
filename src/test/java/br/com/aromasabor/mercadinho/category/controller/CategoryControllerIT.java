@@ -2,6 +2,7 @@ package br.com.aromasabor.mercadinho.category.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -15,6 +16,7 @@ import br.com.aromasabor.mercadinho.category.dto.CategoryRequestDTO;
 import br.com.aromasabor.mercadinho.category.dto.CategoryResponseDTO;
 import br.com.aromasabor.mercadinho.category.service.CategoryService;
 import br.com.aromasabor.mercadinho.product.exception.CategoryAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.CategoryHasProductsException;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.GlobalExceptionHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -138,6 +140,16 @@ class CategoryControllerIT {
     }
 
     @Test
+    void shouldRejectDeletingCategoryWithProducts() throws Exception {
+        doThrow(new CategoryHasProductsException()).when(categoryService).delete(1L);
+
+        mockMvc.perform(delete("/api/categories/1"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message")
+                        .value("Esta categoria possui produtos vinculados e não pode ser excluída."));
+    }
+
+    @Test
     void shouldRejectDuplicateCategory() throws Exception {
         CategoryRequestDTO request = new CategoryRequestDTO();
         request.setName("Bebidas");
@@ -158,6 +170,16 @@ class CategoryControllerIT {
                 .thenThrow(new CategoryNotFoundException("Category not found with id: 99"));
 
         mockMvc.perform(get("/api/categories/99"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Category not found with id: 99"));
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenDeletingMissingCategory() throws Exception {
+        doThrow(new CategoryNotFoundException("Category not found with id: 99"))
+                .when(categoryService).delete(99L);
+
+        mockMvc.perform(delete("/api/categories/99"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value("Category not found with id: 99"));
     }

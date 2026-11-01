@@ -140,6 +140,7 @@ public class ProductController {
     @ApiResponse(responseCode = "200", description = "Estoque atualizado com sucesso")
     @ApiResponse(responseCode = "400", description = "Dados inválidos")
     @ApiResponse(responseCode = "404", description = "Produto não encontrado")
+    @ApiResponse(responseCode = "409", description = "Custo médio do estoque existente não cadastrado")
     public ProductResponseDTO replenishStock(@PathVariable Long id,
                                              @Valid @RequestBody StockReplenishmentRequestDTO request) {
         return productService.replenishStock(id, request);

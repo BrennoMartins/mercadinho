@@ -376,7 +376,8 @@ class ProductControllerIT {
 
     @Test
     void shouldReplenishProductStock() throws Exception {
-        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(5, "Fornecedor XPTO");
+        StockReplenishmentRequestDTO request =
+                new StockReplenishmentRequestDTO(5, new BigDecimal("8.25"), "Fornecedor XPTO");
 
         ProductResponseDTO response = new ProductResponseDTO();
         response.setId(1L);
@@ -400,7 +401,8 @@ class ProductControllerIT {
 
     @Test
     void shouldRejectReplenishmentWithInvalidQuantity() throws Exception {
-        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(0, "Fornecedor XPTO");
+        StockReplenishmentRequestDTO request =
+                new StockReplenishmentRequestDTO(0, new BigDecimal("8.25"), "Fornecedor XPTO");
 
         mockMvc.perform(post("/api/products/1/replenishments")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -411,8 +413,31 @@ class ProductControllerIT {
     }
 
     @Test
+    void shouldRejectReplenishmentWithInvalidUnitCost() throws Exception {
+        mockMvc.perform(post("/api/products/1/replenishments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":2}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.unitCostPrice").value("é obrigatório"));
+
+        mockMvc.perform(post("/api/products/1/replenishments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":2,\"unitCostPrice\":-0.01}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.unitCostPrice").value("deve ser maior ou igual a zero"));
+
+        mockMvc.perform(post("/api/products/1/replenishments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":2,\"unitCostPrice\":1.234}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.unitCostPrice")
+                        .value("deve ter no máximo 8 dígitos inteiros e 2 decimais"));
+    }
+
+    @Test
     void shouldReturnNotFoundWhenReplenishingInexistentProduct() throws Exception {
-        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(3, "Fornecedor XPTO");
+        StockReplenishmentRequestDTO request =
+                new StockReplenishmentRequestDTO(3, new BigDecimal("8.25"), "Fornecedor XPTO");
 
         when(productService.replenishStock(anyLong(), any(StockReplenishmentRequestDTO.class)))
                 .thenThrow(new ProductNotFoundException("Product not found with id: 99"));

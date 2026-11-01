@@ -22,6 +22,7 @@ import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.InvalidProductCatalogQueryException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.ProductCostNotDefinedException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
 import br.com.aromasabor.mercadinho.product.exception.StockAdjustmentNotNeededException;
@@ -370,13 +371,15 @@ class ProductServiceTest {
                 .barcode("78910")
                 .name("Arroz")
                 .price(new BigDecimal("10.00"))
+                .costPrice(new BigDecimal("10.00"))
                 .stock(5)
                 .active(true)
                 .createdAt(LocalDateTime.now().minusDays(1))
                 .updatedAt(LocalDateTime.now().minusDays(1))
                 .build();
 
-        StockReplenishmentRequestDTO request = new StockReplenishmentRequestDTO(4, "Compra fornecedor");
+        StockReplenishmentRequestDTO request =
+                new StockReplenishmentRequestDTO(4, new BigDecimal("20.00"), "Compra fornecedor");
 
         when(productRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(product));
         when(stockMovementRepository.save(any(StockMovementEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -385,16 +388,81 @@ class ProductServiceTest {
         ProductResponseDTO response = productService.replenishStock(10L, request);
 
         assertThat(response.getStock()).isEqualTo(9);
+        assertThat(response.getCostPrice()).isEqualByComparingTo("14.44");
 
-        verify(stockMovementRepository).save(any(StockMovementEntity.class));
+        ArgumentCaptor<StockMovementEntity> movementCaptor = ArgumentCaptor.forClass(StockMovementEntity.class);
+        verify(stockMovementRepository).save(movementCaptor.capture());
+        assertThat(movementCaptor.getValue().getStockAfter()).isEqualTo(9);
         verify(productRepository).save(product);
+    }
+
+    @Test
+    void shouldSetReplenishedCostWhenStockIsZeroEvenIfPreviousCostExists() {
+        ProductEntity product = ProductEntity.builder()
+                .id(15L)
+                .name("Arroz")
+                .costPrice(new BigDecimal("12.50"))
+                .stock(0)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(15L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.replenishStock(
+                15L, new StockReplenishmentRequestDTO(3, new BigDecimal("8.75"), null));
+
+        assertThat(response.getStock()).isEqualTo(3);
+        assertThat(response.getCostPrice()).isEqualByComparingTo("8.75");
+        assertThat(product.getCostPrice()).isEqualByComparingTo("8.75");
+    }
+
+    @Test
+    void shouldRoundWeightedAverageToTwoDecimalsUsingHalfUp() {
+        ProductEntity product = ProductEntity.builder()
+                .id(17L)
+                .name("Arroz")
+                .costPrice(new BigDecimal("1.00"))
+                .stock(1)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(17L)).thenReturn(Optional.of(product));
+        when(stockMovementRepository.save(any(StockMovementEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(productRepository.save(product)).thenReturn(product);
+
+        ProductResponseDTO response = productService.replenishStock(
+                17L, new StockReplenishmentRequestDTO(1, new BigDecimal("1.01"), null));
+
+        assertThat(response.getCostPrice()).isEqualByComparingTo("1.01");
+    }
+
+    @Test
+    void shouldRejectReplenishmentWhenExistingStockHasUnknownCost() {
+        ProductEntity product = ProductEntity.builder()
+                .id(16L)
+                .name("Feijão")
+                .stock(4)
+                .costPrice(null)
+                .active(true)
+                .build();
+        when(productRepository.findByIdForUpdate(16L)).thenReturn(Optional.of(product));
+
+        assertThatThrownBy(() -> productService.replenishStock(
+                16L, new StockReplenishmentRequestDTO(2, new BigDecimal("9.00"), null)))
+                .isInstanceOf(ProductCostNotDefinedException.class)
+                .hasMessage("O custo médio do estoque existente não está cadastrado. "
+                        + "Atualize o custo do produto antes de registrar a reposição.");
+
+        verify(stockMovementRepository, never()).save(any(StockMovementEntity.class));
+        verify(productRepository, never()).save(any(ProductEntity.class));
     }
 
     @Test
     void shouldRejectReplenishmentWhenProductDoesNotExist() {
         when(productRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> productService.replenishStock(99L, new StockReplenishmentRequestDTO(2, null)))
+        assertThatThrownBy(() -> productService.replenishStock(
+                99L, new StockReplenishmentRequestDTO(2, new BigDecimal("1.00"), null)))
                 .isInstanceOf(ProductNotFoundException.class)
                 .hasMessageContaining("99");
 
@@ -409,6 +477,7 @@ class ProductServiceTest {
                 .barcode("78911")
                 .name("Feijao")
                 .price(new BigDecimal("8.00"))
+                .costPrice(new BigDecimal("5.00"))
                 .stock(7)
                 .active(true)
                 .createdAt(LocalDateTime.now().minusDays(1))
@@ -419,7 +488,8 @@ class ProductServiceTest {
         when(stockMovementRepository.save(any(StockMovementEntity.class)))
                 .thenThrow(new RuntimeException("boom"));
 
-        assertThatThrownBy(() -> productService.replenishStock(11L, new StockReplenishmentRequestDTO(3, "NF 123")))
+        assertThatThrownBy(() -> productService.replenishStock(
+                11L, new StockReplenishmentRequestDTO(3, new BigDecimal("6.00"), "NF 123")))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("boom");
 
@@ -446,6 +516,7 @@ class ProductServiceTest {
         assertThat(product.getStock()).isEqualTo(17);
         assertThat(movementCaptor.getValue().getMovementType()).isEqualTo("ADJUSTMENT");
         assertThat(movementCaptor.getValue().getQuantity()).isEqualTo(7);
+        assertThat(movementCaptor.getValue().getStockAfter()).isEqualTo(17);
         assertThat(movementCaptor.getValue().getReason()).isEqualTo("Contagem física");
         verify(productRepository).save(product);
     }
@@ -468,6 +539,7 @@ class ProductServiceTest {
         verify(stockMovementRepository).save(movementCaptor.capture());
         assertThat(response.getStock()).isEqualTo(17);
         assertThat(movementCaptor.getValue().getQuantity()).isEqualTo(-3);
+        assertThat(movementCaptor.getValue().getStockAfter()).isEqualTo(17);
         assertThat(movementCaptor.getValue().getReason()).isEqualTo("Perda identificada");
     }
 
@@ -528,6 +600,7 @@ class ProductServiceTest {
         assertThat(response.getReason()).isEqualTo("Embalagem violada");
         assertThat(response.getReferenceSaleId()).isNull();
         assertThat(product.getStock()).isEqualTo(3);
+        assertThat(movementCaptor.getValue().getStockAfter()).isEqualTo(3);
         assertThat(movementCaptor.getValue().getDiscardReason()).isEqualTo("DAMAGED");
         assertThat(movementCaptor.getValue().getReason()).isEqualTo("Embalagem violada");
         verify(productRepository).save(product);

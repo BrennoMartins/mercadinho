@@ -101,6 +101,8 @@ class StockMovementControllerDbIT {
     @Test
     void shouldListSaleAndReplenishmentMovementsNewestFirst() throws Exception {
         ProductEntity product = createProduct("789000000101", "Café");
+        product.setCostPrice(new BigDecimal("10.00"));
+        productRepository.save(product);
         openTurn();
 
         mockMvc.perform(post("/api/sales")
@@ -110,7 +112,7 @@ class StockMovementControllerDbIT {
 
         mockMvc.perform(post("/api/products/" + product.getId() + "/replenishments")
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"quantity\":5,\"reason\":\"Nota fiscal 456\"}"))
+                        .content("{\"quantity\":5,\"unitCostPrice\":20.00,\"reason\":\"Nota fiscal 456\"}"))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/stock-movements"))
@@ -120,13 +122,17 @@ class StockMovementControllerDbIT {
                 .andExpect(jsonPath("$.content[0].productName").value("Café"))
                 .andExpect(jsonPath("$.content[0].movementType").value("ENTRY"))
                 .andExpect(jsonPath("$.content[0].quantity").value(5))
+                .andExpect(jsonPath("$.content[0].stockAfter").value(13))
                 .andExpect(jsonPath("$.content[0].reason").value("Nota fiscal 456"))
                 .andExpect(jsonPath("$.content[0].referenceSaleId").doesNotExist())
                 .andExpect(jsonPath("$.content[1].movementType").value("SALE"))
                 .andExpect(jsonPath("$.content[1].quantity").value(-2))
+                .andExpect(jsonPath("$.content[1].stockAfter").value(8))
                 .andExpect(jsonPath("$.content[1].reason").value("Venda #1"))
                 .andExpect(jsonPath("$.content[1].referenceSaleId").value(1))
                 .andExpect(jsonPath("$.content[0].createdAt").exists());
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getCostPrice())
+                .isEqualByComparingTo("13.85");
     }
 
     @Test
@@ -212,11 +218,12 @@ class StockMovementControllerDbIT {
     @Test
     void shouldPreserveStockAndSaleHistoryAcrossReplenishmentSaleCatalogEditAndAdjustment() throws Exception {
         ProductEntity product = createProduct("789000000111", "Biscoito");
+        jdbcTemplate.update("update products set cost_price = ? where id = ?", new BigDecimal("10.00"), product.getId());
         openTurn();
 
         mockMvc.perform(post("/api/products/" + product.getId() + "/replenishments")
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"quantity\":5,\"reason\":\"Compra semanal\"}"))
+                        .content("{\"quantity\":5,\"unitCostPrice\":10.00,\"reason\":\"Compra semanal\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.stock").value(15));
 
@@ -258,6 +265,11 @@ class StockMovementControllerDbIT {
                 "select subtotal from sale_items where sale_id = ?", BigDecimal.class, saleId))
                 .isEqualByComparingTo("30.00");
         assertThat(jdbcTemplate.queryForObject(
+                "select unit_cost_price from sale_items where sale_id = ?", BigDecimal.class, saleId))
+                .isEqualByComparingTo("10.00");
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getCostPrice())
+                .isEqualByComparingTo("10.00");
+        assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_movements where product_id = ?", Integer.class, product.getId()))
                 .isEqualTo(3);
 
@@ -284,6 +296,52 @@ class StockMovementControllerDbIT {
     }
 
     @Test
+    void shouldBlockReplenishmentWhenExistingStockHasUnknownCost() throws Exception {
+        ProductEntity product = createProduct("789000000129", "Produto sem custo");
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/replenishments")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":2,\"unitCostPrice\":8.50}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "O custo médio do estoque existente não está cadastrado. "
+                                + "Atualize o custo do produto antes de registrar a reposição."));
+
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isEqualTo(10);
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getCostPrice()).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_movements where product_id = ?",
+                Integer.class,
+                product.getId())).isZero();
+    }
+
+    @Test
+    void shouldKeepHistoricalSaleCostWhenLaterReplenishmentChangesProductAverage() throws Exception {
+        ProductEntity product = createProduct("789000000130", "Café");
+        jdbcTemplate.update("update products set cost_price = ? where id = ?", new BigDecimal("10.00"), product.getId());
+        openTurn();
+
+        var saleResponse = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + product.getId() + ",\"quantity\":2}]}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long saleId = objectMapper.readTree(saleResponse.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(post("/api/products/" + product.getId() + "/replenishments")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"quantity\":10,\"unitCostPrice\":20.00}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.costPrice").value(15.56));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select unit_cost_price from sale_items where sale_id = ?", BigDecimal.class, saleId))
+                .isEqualByComparingTo("10.00");
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getCostPrice())
+                .isEqualByComparingTo("15.56");
+    }
+
+    @Test
     void shouldFilterByProductTypeAndDateRange() throws Exception {
         ProductEntity firstProduct = createProduct("789000000102", "Arroz");
         ProductEntity secondProduct = createProduct("789000000103", "Feijão");
@@ -301,7 +359,8 @@ class StockMovementControllerDbIT {
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].productName").value("Arroz"))
                 .andExpect(jsonPath("$.content[0].movementType").value("ENTRY"))
-                .andExpect(jsonPath("$.content[0].quantity").value(4));
+                .andExpect(jsonPath("$.content[0].quantity").value(4))
+                .andExpect(jsonPath("$.content[0].stockAfter").isEmpty());
     }
 
     @Test
@@ -387,6 +446,8 @@ class StockMovementControllerDbIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(2))
                 .andExpect(jsonPath("$.content[0].quantity").value(-2))
+                .andExpect(jsonPath("$.content[0].stockAfter").value(15))
+                .andExpect(jsonPath("$.content[1].stockAfter").value(17))
                 .andExpect(jsonPath("$.content[0].reason").value("Perda identificada"));
     }
 
@@ -443,6 +504,7 @@ class StockMovementControllerDbIT {
                 .andExpect(jsonPath("$.quantity").value(-3))
                 .andExpect(jsonPath("$.discardReason").value("EXPIRED"))
                 .andExpect(jsonPath("$.reason").value("Validade vencida"))
+                .andExpect(jsonPath("$.stockAfter").value(5))
                 .andExpect(jsonPath("$.referenceSaleId").doesNotExist());
 
         assertThat(jdbcTemplate.queryForObject(
@@ -466,7 +528,8 @@ class StockMovementControllerDbIT {
                 .andExpect(jsonPath("$.content[0].movementType").value("DISCARD"))
                 .andExpect(jsonPath("$.content[0].quantity").value(-3))
                 .andExpect(jsonPath("$.content[0].discardReason").value("EXPIRED"))
-                .andExpect(jsonPath("$.content[0].reason").value("Validade vencida"));
+                .andExpect(jsonPath("$.content[0].reason").value("Validade vencida"))
+                .andExpect(jsonPath("$.content[0].stockAfter").value(5));
     }
 
     @Test
@@ -596,6 +659,7 @@ class StockMovementControllerDbIT {
     @Test
     void shouldSerializeConcurrentAdjustmentAndReplenishment() throws Exception {
         ProductEntity product = createProduct("789000000108", "Macarrão");
+        jdbcTemplate.update("update products set cost_price = ? where id = ?", new BigDecimal("10.00"), product.getId());
         CountDownLatch start = new CountDownLatch(1);
 
         try (var executor = Executors.newFixedThreadPool(2)) {
@@ -608,7 +672,8 @@ class StockMovementControllerDbIT {
             var replenishment = executor.submit(() -> {
                 start.await();
                 productService.replenishStock(
-                        product.getId(), new StockReplenishmentRequestDTO(3, "Reposição concorrente"));
+                        product.getId(), new StockReplenishmentRequestDTO(3, new BigDecimal("5.00"),
+                                "Reposição concorrente"));
                 return null;
             });
 
@@ -628,6 +693,18 @@ class StockMovementControllerDbIT {
                 "select count(*) from stock_movements where product_id = ?",
                 Integer.class,
                 product.getId())).isEqualTo(2);
+        var movementBalances = jdbcTemplate.queryForList(
+                "select quantity, stock_after from stock_movements where product_id = ? order by id",
+                product.getId());
+        assertThat(movementBalances).isIn(
+                java.util.List.of(
+                        java.util.Map.of("quantity", -2, "stock_after", 8),
+                        java.util.Map.of("quantity", 3, "stock_after", 11)),
+                java.util.List.of(
+                        java.util.Map.of("quantity", 3, "stock_after", 13),
+                        java.util.Map.of("quantity", -5, "stock_after", 8)));
+        assertThat(movementBalances.get(movementBalances.size() - 1).get("stock_after"))
+                .isEqualTo(finalStock);
     }
 
     @Test
@@ -716,6 +793,114 @@ class StockMovementControllerDbIT {
                 .createdAt(createdAt)
                 .reason(reason)
                 .build());
+    }
+
+    @Test
+    void shouldReturnNullBalanceForHistoricalMovementWithoutRecordedStockAfter() throws Exception {
+        ProductEntity product = createProduct("789000000125", "Produto histórico");
+        createMovement(product, "ENTRY", 4, LocalDateTime.now(), "Registro legado");
+
+        mockMvc.perform(get("/api/stock-movements").param("productId", product.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].quantity").value(4))
+                .andExpect(jsonPath("$.content[0].stockAfter").isEmpty());
+    }
+
+    @Test
+    void shouldRollbackStockAndAverageCostWhenReplenishmentMovementInsertFails() {
+        ProductEntity product = createProduct("789000000127", "Café");
+        jdbcTemplate.update("update products set cost_price = ? where id = ?", new BigDecimal("10.00"), product.getId());
+        jdbcTemplate.execute("""
+                CREATE OR REPLACE FUNCTION fail_stock_entry_for_test() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.movement_type = 'ENTRY' THEN
+                        RAISE EXCEPTION 'forced stock entry failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_stock_entry_for_test
+                BEFORE INSERT ON stock_movements
+                FOR EACH ROW EXECUTE FUNCTION fail_stock_entry_for_test()
+                """);
+
+        try {
+            assertThatThrownBy(() -> productService.replenishStock(
+                    product.getId(), new StockReplenishmentRequestDTO(5, new BigDecimal("20.00"), null)))
+                    .isInstanceOf(RuntimeException.class);
+
+            assertThat(jdbcTemplate.queryForObject(
+                    "select stock from products where id = ?", Integer.class, product.getId())).isEqualTo(10);
+            assertThat(jdbcTemplate.queryForObject(
+                    "select cost_price from products where id = ?", BigDecimal.class, product.getId()))
+                    .isEqualByComparingTo("10.00");
+            assertThat(jdbcTemplate.queryForObject(
+                    "select count(*) from stock_movements where product_id = ?",
+                    Integer.class,
+                    product.getId())).isZero();
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_stock_entry_for_test ON stock_movements");
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_stock_entry_for_test()");
+        }
+    }
+
+    @Test
+    void shouldSerializeConcurrentReplenishmentsAndCalculateAverageFromCommittedState() throws Exception {
+        ProductEntity product = createProduct("789000000128", "Farinha");
+        jdbcTemplate.update("update products set cost_price = ? where id = ?", new BigDecimal("10.00"), product.getId());
+        CountDownLatch start = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> {
+                start.await();
+                productService.replenishStock(
+                        product.getId(), new StockReplenishmentRequestDTO(5, new BigDecimal("20.00"), null));
+                return null;
+            });
+            var second = executor.submit(() -> {
+                start.await();
+                productService.replenishStock(
+                        product.getId(), new StockReplenishmentRequestDTO(5, new BigDecimal("30.00"), null));
+                return null;
+            });
+
+            start.countDown();
+            first.get(10, TimeUnit.SECONDS);
+            second.get(10, TimeUnit.SECONDS);
+        }
+
+        ProductEntity updatedProduct = productRepository.findById(product.getId()).orElseThrow();
+        assertThat(updatedProduct.getStock()).isEqualTo(20);
+        assertThat(updatedProduct.getCostPrice()).isEqualByComparingTo("17.50");
+        assertThat(jdbcTemplate.queryForList(
+                "select stock_after from stock_movements where product_id = ? order by id",
+                Integer.class,
+                product.getId())).containsExactlyInAnyOrder(15, 20);
+    }
+
+    @Test
+    void shouldPersistSequentialBalancesForDuplicateProductItemsInSale() throws Exception {
+        ProductEntity product = createProduct("789000000126", "Arroz");
+        openTurn();
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"productId\":" + product.getId()
+                                + ",\"quantity\":2},{\"productId\":" + product.getId()
+                                + ",\"quantity\":3}]}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/stock-movements").param("productId", product.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].quantity").value(-3))
+                .andExpect(jsonPath("$.content[0].stockAfter").value(5))
+                .andExpect(jsonPath("$.content[1].quantity").value(-2))
+                .andExpect(jsonPath("$.content[1].stockAfter").value(8));
+
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isEqualTo(5);
     }
 
     private void openTurn() {

@@ -184,8 +184,35 @@ class SaleServiceTest {
         assertThat(movements).hasSize(1);
         assertThat(movements.get(0).getMovementType()).isEqualTo("SALE");
         assertThat(movements.get(0).getQuantity()).isEqualTo(-2);
+        assertThat(movements.get(0).getStockAfter()).isEqualTo(8);
         assertThat(movements.get(0).getReferenceSale().getId()).isEqualTo(102L);
         assertThat(rice.getStock()).isEqualTo(8);
+    }
+
+    @Test
+    void shouldRecordSequentialBalancesForRepeatedProductItemsInSale() {
+        TurnEntity openTurn = buildOpenTurn();
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10);
+        SaleRequestDTO request = new SaleRequestDTO(List.of(
+                new SaleItemRequestDTO(1L, 2),
+                new SaleItemRequestDTO(1L, 3)));
+
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
+        when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        saleService.create(request);
+
+        ArgumentCaptor<List<StockMovementEntity>> movementsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(stockMovementRepository).saveAll(movementsCaptor.capture());
+
+        assertThat(movementsCaptor.getValue())
+                .extracting(StockMovementEntity::getQuantity)
+                .containsExactly(-2, -3);
+        assertThat(movementsCaptor.getValue())
+                .extracting(StockMovementEntity::getStockAfter)
+                .containsExactly(8, 5);
+        assertThat(rice.getStock()).isEqualTo(5);
     }
 
     @Test

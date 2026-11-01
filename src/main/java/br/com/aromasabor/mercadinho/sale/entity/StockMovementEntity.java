@@ -41,6 +41,9 @@ public class StockMovementEntity {
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
 
+    @Column(name = "stock_after")
+    private Integer stockAfter;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reference_sale_id")
     private SaleEntity referenceSale;

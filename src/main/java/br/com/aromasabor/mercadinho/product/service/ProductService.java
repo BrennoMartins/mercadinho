@@ -13,6 +13,7 @@ import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyExistsException;
 import br.com.aromasabor.mercadinho.product.exception.ProductAlreadyActiveException;
+import br.com.aromasabor.mercadinho.product.exception.ProductCostNotDefinedException;
 import br.com.aromasabor.mercadinho.product.exception.InvalidProductCatalogQueryException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.exception.InsufficientStockForDiscardException;
@@ -22,6 +23,8 @@ import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.sale.entity.StockMovementEntity;
 import br.com.aromasabor.mercadinho.sale.dto.StockMovementResponseDTO;
 import br.com.aromasabor.mercadinho.sale.repository.StockMovementRepository;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -229,14 +232,35 @@ public class ProductService {
             throw new ProductNotFoundException("Product not found with id: " + id);
         }
 
+        BigDecimal unitCostPrice = request.getUnitCostPrice();
+        BigDecimal currentCostPrice = product.getCostPrice();
+        if (product.getStock() > 0 && currentCostPrice == null) {
+            throw new ProductCostNotDefinedException(
+                    "O custo médio do estoque existente não está cadastrado. "
+                            + "Atualize o custo do produto antes de registrar a reposição.");
+        }
+
+        BigDecimal newCostPrice;
+        if (product.getStock() == 0) {
+            newCostPrice = unitCostPrice;
+        } else {
+            BigDecimal existingStockValue = currentCostPrice.multiply(BigDecimal.valueOf(product.getStock()));
+            BigDecimal incomingStockValue = unitCostPrice.multiply(BigDecimal.valueOf(request.getQuantity()));
+            BigDecimal resultingStock = BigDecimal.valueOf((long) product.getStock() + request.getQuantity());
+            newCostPrice = existingStockValue.add(incomingStockValue)
+                    .divide(resultingStock, 2, RoundingMode.HALF_UP);
+        }
+
         LocalDateTime now = LocalDateTime.now();
         product.setStock(product.getStock() + request.getQuantity());
+        product.setCostPrice(newCostPrice);
         product.setUpdatedAt(now);
 
         StockMovementEntity movement = StockMovementEntity.builder()
                 .product(product)
                 .movementType(MOVEMENT_TYPE_ENTRY)
                 .quantity(request.getQuantity())
+                .stockAfter(product.getStock())
                 .referenceSale(null)
                 .reason(request.getReason())
                 .createdAt(now)
@@ -266,6 +290,7 @@ public class ProductService {
                 .product(product)
                 .movementType(MOVEMENT_TYPE_ADJUSTMENT)
                 .quantity(quantityDifference)
+                .stockAfter(product.getStock())
                 .referenceSale(null)
                 .reason(request.getReason().trim())
                 .createdAt(now)
@@ -294,6 +319,7 @@ public class ProductService {
                 .product(product)
                 .movementType(MOVEMENT_TYPE_DISCARD)
                 .quantity(-request.getQuantity())
+                .stockAfter(product.getStock())
                 .referenceSale(null)
                 .reason(request.getObservation() == null || request.getObservation().isBlank()
                         ? null
@@ -311,6 +337,7 @@ public class ProductService {
                 product.getName(),
                 savedMovement.getMovementType(),
                 savedMovement.getQuantity(),
+                savedMovement.getStockAfter(),
                 savedMovement.getCreatedAt(),
                 savedMovement.getReason(),
                 savedMovement.getDiscardReason(),

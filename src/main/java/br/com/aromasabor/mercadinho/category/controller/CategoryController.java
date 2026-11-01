@@ -67,9 +67,9 @@ public class CategoryController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Excluir categoria")
     @ApiResponse(responseCode = "204", description = "Categoria excluída com sucesso")
+    @ApiResponse(responseCode = "409", description = "Categoria possui produtos vinculados")
     @ApiResponse(responseCode = "404", description = "Categoria não encontrada")
     public void delete(@PathVariable Long id) {
         categoryService.delete(id);
     }
 }
-

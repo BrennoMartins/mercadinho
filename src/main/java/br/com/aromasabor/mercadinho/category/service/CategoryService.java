@@ -4,8 +4,10 @@ import br.com.aromasabor.mercadinho.category.dto.CategoryRequestDTO;
 import br.com.aromasabor.mercadinho.category.dto.CategoryResponseDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.CategoryHasProductsException;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
+import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -16,9 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class CategoryService {
 
     private final CategoryRepository categoryRepository;
+    private final ProductRepository productRepository;
 
-    public CategoryService(CategoryRepository categoryRepository) {
+    public CategoryService(CategoryRepository categoryRepository, ProductRepository productRepository) {
         this.categoryRepository = categoryRepository;
+        this.productRepository = productRepository;
     }
 
     @Transactional
@@ -62,10 +66,14 @@ public class CategoryService {
 
     @Transactional
     public void delete(Long id) {
-        if (!categoryRepository.existsById(id)) {
-            throw new CategoryNotFoundException("Category not found with id: " + id);
+        CategoryEntity category = categoryRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new CategoryNotFoundException("Category not found with id: " + id));
+
+        if (productRepository.existsByCategory_Id(id)) {
+            throw new CategoryHasProductsException();
         }
-        categoryRepository.deleteById(id);
+
+        categoryRepository.delete(category);
     }
 
     private void validateNameAvailability(String name, Long excludedCategoryId) {
@@ -87,4 +95,3 @@ public class CategoryService {
         return response;
     }
 }
-

@@ -3,6 +3,7 @@ package br.com.aromasabor.mercadinho.category.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,8 +11,10 @@ import br.com.aromasabor.mercadinho.category.dto.CategoryRequestDTO;
 import br.com.aromasabor.mercadinho.category.dto.CategoryResponseDTO;
 import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.exception.CategoryAlreadyExistsException;
+import br.com.aromasabor.mercadinho.product.exception.CategoryHasProductsException;
 import br.com.aromasabor.mercadinho.product.exception.CategoryNotFoundException;
 import br.com.aromasabor.mercadinho.product.repository.CategoryRepository;
+import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +29,9 @@ class CategoryServiceTest {
 
     @Mock
     private CategoryRepository categoryRepository;
+
+    @Mock
+    private ProductRepository productRepository;
 
     @InjectMocks
     private CategoryService categoryService;
@@ -102,20 +108,42 @@ class CategoryServiceTest {
 
     @Test
     void shouldDeleteCategorySuccessfully() {
-        when(categoryRepository.existsById(1L)).thenReturn(true);
+        CategoryEntity category = CategoryEntity.builder()
+                .id(1L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now())
+                .build();
+        when(categoryRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(category));
+        when(productRepository.existsByCategory_Id(1L)).thenReturn(false);
 
         categoryService.delete(1L);
 
-        verify(categoryRepository).deleteById(1L);
+        verify(categoryRepository).delete(category);
     }
 
     @Test
     void shouldThrowExceptionWhenCategoryNotFoundOnDelete() {
-        when(categoryRepository.existsById(1L)).thenReturn(false);
+        when(categoryRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> categoryService.delete(1L))
                 .isInstanceOf(CategoryNotFoundException.class)
                 .hasMessageContaining("1");
+        verify(productRepository, never()).existsByCategory_Id(1L);
+    }
+
+    @Test
+    void shouldRejectDeletingCategoryWithAssociatedProducts() {
+        CategoryEntity category = CategoryEntity.builder()
+                .id(1L)
+                .name("Bebidas")
+                .createdAt(LocalDateTime.now())
+                .build();
+        when(categoryRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(category));
+        when(productRepository.existsByCategory_Id(1L)).thenReturn(true);
+
+        assertThatThrownBy(() -> categoryService.delete(1L))
+                .isInstanceOf(CategoryHasProductsException.class)
+                .hasMessage("Esta categoria possui produtos vinculados e não pode ser excluída.");
+        verify(categoryRepository, never()).delete(any(CategoryEntity.class));
     }
 }
-

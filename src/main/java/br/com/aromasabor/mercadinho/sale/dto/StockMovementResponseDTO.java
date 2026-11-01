@@ -25,6 +25,11 @@ public class StockMovementResponseDTO {
     @Schema(description = "Quantidade movimentada; saídas de venda são negativas", example = "-2")
     private final Integer quantity;
 
+    @Schema(description = "Saldo do produto imediatamente após a movimentação; nulo para registros históricos desconhecidos",
+            example = "8",
+            nullable = true)
+    private final Integer stockAfter;
+
     @Schema(description = "Data e hora da movimentação", example = "2026-10-25T18:30:00")
     private final LocalDateTime createdAt;
 
