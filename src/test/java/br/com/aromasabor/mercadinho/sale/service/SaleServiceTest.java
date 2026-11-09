@@ -7,7 +7,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import br.com.aromasabor.mercadinho.product.entity.CategoryEntity;
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
+import br.com.aromasabor.mercadinho.product.exception.ProductCostNotDefinedException;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.sale.dto.SaleItemRequestDTO;
 import br.com.aromasabor.mercadinho.sale.dto.SaleRequestDTO;
@@ -145,20 +147,20 @@ class SaleServiceTest {
     }
 
     @Test
-    void shouldReportKnownGrossProfitAsIncompleteWhenProductHasNoCost() {
-        TurnEntity openTurn = buildOpenTurn();
-        ProductEntity product = buildProduct(9L, "Produto sem custo", "5.00", 10);
+    void shouldRejectSaleWithoutHistoricalCostBeforeChangingSaleStockOrTurn() {
+        ProductEntity product = buildProduct(9L, "Produto sem custo", "5.00", 10, null);
         when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(product));
-        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(openTurn));
-        when(saleRepository.save(any(SaleEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        SaleResponseDTO response = saleService.create(
-                new SaleRequestDTO(List.of(new SaleItemRequestDTO(9L, 3))));
+        assertThatThrownBy(() -> saleService.create(
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(9L, 3)))))
+                .isInstanceOf(ProductCostNotDefinedException.class)
+                .hasMessageContaining("não possui custo cadastrado");
 
-        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("0.00");
-        assertThat(response.getGrossProfitComplete()).isFalse();
-        assertThat(response.getItemsWithoutHistoricalCost()).isEqualTo(1L);
-        assertThat(response.getTotal()).isEqualByComparingTo("15.00");
+        assertThat(product.getStock()).isEqualTo(10);
+        verify(saleRepository, never()).save(any(SaleEntity.class));
+        verify(stockMovementRepository, never()).saveAll(any());
+        verify(productRepository, never()).saveAll(any());
+        verify(turnRepository, never()).findFirstByStatusForShare(TurnStatus.OPEN);
     }
 
     @Test
@@ -232,6 +234,89 @@ class SaleServiceTest {
     }
 
     @Test
+    void shouldCaptureHistoricalProductCategoryCostAndAllocatedDiscount() {
+        CategoryEntity category = CategoryEntity.builder()
+                .id(25L)
+                .name("Mercearia histórica")
+                .createdAt(LocalDateTime.now().minusDays(1))
+                .build();
+        ProductEntity rice = buildProduct(1L, "Arroz histórico", "12.50", 10, "7.00");
+        rice.setCategory(category);
+        stubOpenSale(rice);
+
+        SaleResponseDTO response = saleService.create(new SaleRequestDTO(
+                List.of(new SaleItemRequestDTO(1L, 2, new BigDecimal("15.00"))),
+                new BigDecimal("5.00")));
+
+        assertThat(response.getItems()).singleElement().satisfies(item -> {
+            assertThat(item.getProductName()).isEqualTo("Arroz histórico");
+            assertThat(item.getCategoryId()).isEqualTo(25L);
+            assertThat(item.getCategoryName()).isEqualTo("Mercearia histórica");
+            assertThat(item.getUnitCostPrice()).isEqualByComparingTo("7.00");
+            assertThat(item.getSubtotal()).isEqualByComparingTo("30.00");
+            assertThat(item.getDiscountAllocatedAmount()).isEqualByComparingTo("5.00");
+        });
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("11.00");
+    }
+
+    @Test
+    void shouldPersistZeroAsKnownHistoricalCost() {
+        stubOpenSale(buildProduct(1L, "Produto sem custo de aquisição", "5.00", 10, "0.00"));
+
+        SaleResponseDTO response = saleService.create(
+                new SaleRequestDTO(List.of(new SaleItemRequestDTO(1L, 2))));
+
+        assertThat(response.getGrossProfitComplete()).isTrue();
+        assertThat(response.getGrossProfitKnownAmount()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void shouldKeepTotalsAndItemProfitsConsistentAfterProportionalDiscountAllocation() {
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10, "8.00");
+        ProductEntity beans = buildProduct(2L, "Feijao", "9.00", 10, "4.50");
+        stubOpenSale(rice, beans);
+
+        SaleResponseDTO response = saleService.create(new SaleRequestDTO(List.of(
+                new SaleItemRequestDTO(1L, 2),
+                new SaleItemRequestDTO(2L, 3)), new BigDecimal("3.00")));
+
+        BigDecimal allocatedDiscount = response.getItems().stream()
+                .map(item -> item.getDiscountAllocatedAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal itemGrossProfit = response.getItems().stream()
+                .map(item -> item.getSubtotal()
+                        .subtract(item.getDiscountAllocatedAmount())
+                        .subtract(item.getUnitCostPrice().multiply(BigDecimal.valueOf(item.getQuantity()))))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalCost = response.getItems().stream()
+                .map(item -> item.getUnitCostPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        assertThat(response.getSubtotal()).isEqualByComparingTo("52.00");
+        assertThat(response.getDiscountAmount()).isEqualByComparingTo("3.00");
+        assertThat(response.getTotal()).isEqualByComparingTo("49.00");
+        assertThat(allocatedDiscount).isEqualByComparingTo(response.getDiscountAmount());
+        assertThat(totalCost).isEqualByComparingTo("29.50");
+        assertThat(itemGrossProfit).isEqualByComparingTo("19.50");
+        assertThat(itemGrossProfit).isEqualByComparingTo(response.getGrossProfitKnownAmount());
+    }
+
+    @Test
+    void shouldRejectRepeatedProductQuantityAboveStockWithoutMutatingProduct() {
+        ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 4, "7.00");
+        when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
+
+        assertThatThrownBy(() -> saleService.create(new SaleRequestDTO(List.of(
+                new SaleItemRequestDTO(1L, 3),
+                new SaleItemRequestDTO(1L, 2)))))
+                .isInstanceOf(br.com.aromasabor.mercadinho.sale.exception.ProductOutOfStockException.class);
+
+        assertThat(rice.getStock()).isEqualTo(4);
+        verify(saleRepository, never()).save(any(SaleEntity.class));
+        verify(stockMovementRepository, never()).saveAll(any());
+    }
+
+    @Test
     void shouldDefaultDiscountToZeroWhenOmitted() {
         stubOpenSale(buildProduct(1L, "Arroz", "12.50", 10, "7.00"));
 
@@ -273,7 +358,6 @@ class SaleServiceTest {
     void shouldRejectDiscountAboveSubtotalWithoutChangingStock() {
         ProductEntity rice = buildProduct(1L, "Arroz", "12.50", 10, "7.00");
         when(productRepository.findAllByIdInForUpdate(any())).thenReturn(List.of(rice));
-        when(turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)).thenReturn(Optional.of(buildOpenTurn()));
 
         assertThatThrownBy(() -> saleService.create(new SaleRequestDTO(
                 List.of(new SaleItemRequestDTO(1L, 1)), new BigDecimal("12.51"))))
@@ -300,7 +384,7 @@ class SaleServiceTest {
     }
 
     private ProductEntity buildProduct(Long id, String name, String price, Integer stock) {
-        return buildProduct(id, name, price, stock, null);
+        return buildProduct(id, name, price, stock, "6.00");
     }
 
     private ProductEntity buildProduct(Long id, String name, String price, Integer stock, String costPrice) {

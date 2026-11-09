@@ -48,6 +48,18 @@ public class SaleItemEntity {
     @Column(name = "unit_cost_price", precision = 10, scale = 2)
     private BigDecimal unitCostPrice;
 
-    @Column(name = "subtotal", nullable = false, precision = 10, scale = 2)
+    @Column(name = "product_name_snapshot")
+    private String productNameSnapshot;
+
+    @Column(name = "category_id_snapshot")
+    private Long categoryIdSnapshot;
+
+    @Column(name = "category_name_snapshot")
+    private String categoryNameSnapshot;
+
+    @Column(name = "subtotal", nullable = false, precision = 30, scale = 2)
     private BigDecimal subtotal;
+
+    @Column(name = "discount_allocated_amount", precision = 30, scale = 2)
+    private BigDecimal discountAllocatedAmount;
 }

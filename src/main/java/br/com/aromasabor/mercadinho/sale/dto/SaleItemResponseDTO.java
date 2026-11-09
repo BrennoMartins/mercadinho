@@ -14,8 +14,11 @@ public class SaleItemResponseDTO {
 
     private Long productId;
     private String productName;
+    private Long categoryId;
+    private String categoryName;
     private Integer quantity;
     private BigDecimal unitPrice;
+    private BigDecimal unitCostPrice;
     private BigDecimal subtotal;
+    private BigDecimal discountAllocatedAmount;
 }
-

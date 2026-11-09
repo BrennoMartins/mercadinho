@@ -18,6 +18,7 @@ import java.time.ZoneId;
 import java.util.List;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -34,7 +35,7 @@ public class DashboardService {
         this.turnRepository = turnRepository;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public DashboardSummaryResponse getSummary() {
         LocalDate date = LocalDate.now(ZoneId.systemDefault());
         LocalDateTime start = date.atStartOfDay();
@@ -48,7 +49,7 @@ public class DashboardService {
                 ? ZERO_MONEY
                 : salesSummary.getTotalRevenue();
         GrossProfitSummaryProjection grossProfit = saleRepository.getGrossProfitSummary(start, end);
-        BigDecimal grossProfitKnownAmount = grossProfit == null || grossProfit.getGrossProfitKnownAmount() == null
+        BigDecimal grossProfitKnownAmount = grossProfit == null
                 ? ZERO_MONEY
                 : grossProfit.getGrossProfitKnownAmount();
         long itemsWithoutHistoricalCost = grossProfit == null || grossProfit.getItemsWithoutHistoricalCost() == null

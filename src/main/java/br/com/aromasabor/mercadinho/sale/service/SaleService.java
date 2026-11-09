@@ -1,6 +1,7 @@
 package br.com.aromasabor.mercadinho.sale.service;
 
 import br.com.aromasabor.mercadinho.product.entity.ProductEntity;
+import br.com.aromasabor.mercadinho.product.exception.ProductCostNotDefinedException;
 import br.com.aromasabor.mercadinho.product.exception.ProductNotFoundException;
 import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.sale.dto.SaleItemRequestDTO;
@@ -23,6 +24,7 @@ import br.com.aromasabor.mercadinho.turn.repository.TurnRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,22 +75,10 @@ public class SaleService {
             throw new ProductNotFoundException("Product not found with id: " + missingProductId);
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        TurnEntity openTurn = turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)
-                .orElseThrow(() -> new MarketClosedException(
-                        "Não é possível registrar a venda porque o mercado está fechado."));
-
-        SaleEntity sale = SaleEntity.builder()
-                .status(SALE_STATUS_COMPLETED)
-                .subtotal(BigDecimal.ZERO)
-                .discountAmount(BigDecimal.ZERO)
-                .total(BigDecimal.ZERO)
-                .createdAt(now)
-                .turn(openTurn)
-                .build();
-
         BigDecimal subtotal = BigDecimal.ZERO;
-        List<StockMovementEntity> stockMovements = new ArrayList<>();
+        Map<Long, Long> quantitiesByProduct = new LinkedHashMap<>();
+        List<SaleItemEntity> saleItems = new ArrayList<>();
+        List<BigDecimal> itemSubtotals = new ArrayList<>();
 
         for (SaleItemRequestDTO requestedItem : request.getItems()) {
             ProductEntity product = productsById.get(requestedItem.getProductId());
@@ -96,30 +86,34 @@ public class SaleService {
                 throw new ProductNotFoundException("Product not found with id: " + requestedItem.getProductId());
             }
 
-            validateStock(product, requestedItem.getQuantity());
+            BigDecimal unitCostPrice = product.getCostPrice();
+            if (unitCostPrice == null) {
+                throw new ProductCostNotDefinedException(
+                        "Produto '" + product.getName() + "' não possui custo cadastrado para a venda.");
+            }
+            validateUnitPrice(unitCostPrice, false);
 
             BigDecimal unitPrice = requestedItem.getUnitPrice() != null
                     ? requestedItem.getUnitPrice().setScale(2)
                     : product.getPrice();
+            validateUnitPrice(unitPrice, requestedItem.getUnitPrice() != null);
             BigDecimal itemSubtotal = unitPrice.multiply(BigDecimal.valueOf(requestedItem.getQuantity()));
             subtotal = subtotal.add(itemSubtotal);
+            itemSubtotals.add(itemSubtotal);
+            quantitiesByProduct.merge(product.getId(), requestedItem.getQuantity().longValue(), Long::sum);
 
-            SaleItemEntity saleItem = SaleItemEntity.builder()
+            Long categoryId = product.getCategory() == null ? null : product.getCategory().getId();
+            String categoryName = product.getCategory() == null ? null : product.getCategory().getName();
+
+            saleItems.add(SaleItemEntity.builder()
                     .product(product)
                     .quantity(requestedItem.getQuantity())
                     .unitPrice(unitPrice)
-                    .unitCostPrice(product.getCostPrice())
+                    .unitCostPrice(unitCostPrice)
+                    .productNameSnapshot(product.getName())
+                    .categoryIdSnapshot(categoryId)
+                    .categoryNameSnapshot(categoryName)
                     .subtotal(itemSubtotal)
-                    .build();
-
-            sale.addItem(saleItem);
-            product.setStock(product.getStock() - requestedItem.getQuantity());
-            stockMovements.add(StockMovementEntity.builder()
-                    .product(product)
-                    .movementType(MOVEMENT_TYPE_SALE)
-                    .quantity(-requestedItem.getQuantity())
-                    .stockAfter(product.getStock())
-                    .createdAt(now)
                     .build());
         }
 
@@ -127,9 +121,45 @@ public class SaleService {
             throw new InvalidSaleAmountException("O desconto não pode ser maior que o subtotal da venda.");
         }
 
-        sale.setSubtotal(subtotal);
-        sale.setDiscountAmount(discountAmount);
-        sale.setTotal(subtotal.subtract(discountAmount));
+        quantitiesByProduct.forEach((productId, requestedQuantity) ->
+                validateStock(productsById.get(productId), requestedQuantity));
+        List<BigDecimal> allocatedDiscounts = SaleDiscountAllocator.allocate(discountAmount, itemSubtotals);
+        for (int index = 0; index < saleItems.size(); index++) {
+            saleItems.get(index).setDiscountAllocatedAmount(allocatedDiscounts.get(index));
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        TurnEntity openTurn = turnRepository.findFirstByStatusForShare(TurnStatus.OPEN)
+                .orElseThrow(() -> new MarketClosedException(
+                        "Não é possível registrar a venda porque o mercado está fechado."));
+        SaleEntity sale = SaleEntity.builder()
+                .status(SALE_STATUS_COMPLETED)
+                .subtotal(subtotal)
+                .discountAmount(discountAmount)
+                .total(subtotal.subtract(discountAmount))
+                .createdAt(now)
+                .turn(openTurn)
+                .build();
+        saleItems.forEach(sale::addItem);
+
+        Map<Long, Integer> stockAfterByProduct = new HashMap<>();
+        quantitiesByProduct.keySet().forEach(productId -> stockAfterByProduct.put(
+                productId, productsById.get(productId).getStock()));
+        List<StockMovementEntity> stockMovements = new ArrayList<>();
+        for (SaleItemEntity item : saleItems) {
+            ProductEntity product = item.getProduct();
+            int stockAfter = stockAfterByProduct.get(product.getId()) - item.getQuantity();
+            stockAfterByProduct.put(product.getId(), stockAfter);
+            stockMovements.add(StockMovementEntity.builder()
+                    .product(product)
+                    .movementType(MOVEMENT_TYPE_SALE)
+                    .quantity(-item.getQuantity())
+                    .stockAfter(stockAfter)
+                    .createdAt(now)
+                    .build());
+        }
+        stockAfterByProduct.forEach((productId, stock) -> productsById.get(productId).setStock(stock));
+
         SaleEntity savedSale = saleRepository.save(sale);
 
         stockMovements.forEach(movement -> {
@@ -174,6 +204,9 @@ public class SaleService {
         if (discount.stripTrailingZeros().scale() > 2) {
             throw new InvalidSaleAmountException("O desconto deve ter no máximo 2 casas decimais.");
         }
+        if (integerDigits(discount) > 8) {
+            throw new InvalidSaleAmountException("O desconto deve ter no máximo 8 dígitos inteiros.");
+        }
         return discount.setScale(2);
     }
 
@@ -181,15 +214,28 @@ public class SaleService {
         if (unitPrice == null) {
             return;
         }
-        if (unitPrice.signum() <= 0) {
-            throw new InvalidSaleAmountException("O preço unitário deve ser maior que zero.");
-        }
-        if (unitPrice.stripTrailingZeros().scale() > 2) {
-            throw new InvalidSaleAmountException("O preço unitário deve ter no máximo 2 casas decimais.");
+        validateUnitPrice(unitPrice, true);
+    }
+
+    private void validateUnitPrice(BigDecimal unitPrice, boolean mustBePositive) {
+        if (unitPrice == null
+                || (mustBePositive && unitPrice.signum() <= 0)
+                || (!mustBePositive && unitPrice.signum() < 0)
+                || unitPrice.stripTrailingZeros().scale() > 2
+                || integerDigits(unitPrice) > 8) {
+            throw new InvalidSaleAmountException(
+                    mustBePositive
+                            ? "O preço unitário deve ser positivo e ter no máximo 8 dígitos inteiros e 2 decimais."
+                            : "O custo unitário deve ser não negativo e ter no máximo 8 dígitos inteiros e 2 decimais.");
         }
     }
 
-    private void validateStock(ProductEntity product, Integer requestedQuantity) {
+    private int integerDigits(BigDecimal amount) {
+        BigDecimal normalized = amount.stripTrailingZeros();
+        return Math.max(0, normalized.precision() - normalized.scale());
+    }
+
+    private void validateStock(ProductEntity product, long requestedQuantity) {
         if (product.getStock() < requestedQuantity) {
             throw new ProductOutOfStockException(
                     "Insufficient stock for product id " + product.getId()
@@ -224,10 +270,14 @@ public class SaleService {
     private SaleItemResponseDTO toItemResponse(SaleItemEntity item) {
         SaleItemResponseDTO response = new SaleItemResponseDTO();
         response.setProductId(item.getProduct().getId());
-        response.setProductName(item.getProduct().getName());
+        response.setProductName(item.getProductNameSnapshot());
+        response.setCategoryId(item.getCategoryIdSnapshot());
+        response.setCategoryName(item.getCategoryNameSnapshot());
         response.setQuantity(item.getQuantity());
         response.setUnitPrice(item.getUnitPrice());
+        response.setUnitCostPrice(item.getUnitCostPrice());
         response.setSubtotal(item.getSubtotal());
+        response.setDiscountAllocatedAmount(item.getDiscountAllocatedAmount());
         return response;
     }
 }

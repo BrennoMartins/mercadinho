@@ -37,14 +37,14 @@ public class SaleEntity {
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "subtotal", nullable = false, precision = 10, scale = 2)
+    @Column(name = "subtotal", nullable = false, precision = 30, scale = 2)
     private BigDecimal subtotal;
 
     @Column(name = "discount_amount", nullable = false, precision = 10, scale = 2)
     @Builder.Default
     private BigDecimal discountAmount = BigDecimal.ZERO;
 
-    @Column(name = "total", nullable = false, precision = 10, scale = 2)
+    @Column(name = "total", nullable = false, precision = 30, scale = 2)
     private BigDecimal total;
 
     @Column(name = "status", nullable = false, length = 20)
@@ -76,4 +76,3 @@ public class SaleEntity {
         item.setSale(this);
     }
 }
-

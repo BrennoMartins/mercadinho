@@ -44,21 +44,44 @@ public interface SaleRepository extends JpaRepository<SaleEntity, Long> {
     DailySalesSummaryProjection getDailySummary(@Param("start") LocalDateTime start,
                                                 @Param("end") LocalDateTime end);
 
-    @Query("""
-            select coalesce(sum((item.unitPrice - item.unitCostPrice) * item.quantity), 0.00)
-                        - (select coalesce(sum(sale.discountAmount), 0.00)
-                           from SaleEntity sale
-                           where sale.status = 'COMPLETED'
-                             and sale.createdAt >= :start
-                             and sale.createdAt < :end)
-                        as grossProfitKnownAmount,
-                   coalesce(sum(case when item.unitCostPrice is null then 1L else 0L end), 0L)
-                        as itemsWithoutHistoricalCost
-            from SaleItemEntity item
-            where item.sale.status = 'COMPLETED'
-              and item.sale.createdAt >= :start
-              and item.sale.createdAt < :end
-            """)
+    @Query(value = """
+            select case
+                       when bool_or(sale_summary.gross_profit_known_amount is null) then null
+                       else coalesce(sum(sale_summary.gross_profit_known_amount), 0.00)
+                   end as "grossProfitKnownAmount",
+                   coalesce(sum(sale_summary.items_without_historical_cost), 0)
+                        as "itemsWithoutHistoricalCost"
+            from (
+                select s.id,
+                       case
+                           when count(*) filter (where si.unit_cost_price is null) > 0
+                                and coalesce(s.discount_amount, 0.00) > 0
+                                and bool_or(si.unit_cost_price is not null
+                                    and si.discount_allocated_amount is null)
+                           then null
+                           when count(*) filter (where si.unit_cost_price is null) = 0
+                                and not bool_and(si.discount_allocated_amount is not null)
+                           then coalesce(sum((si.unit_price - si.unit_cost_price) * si.quantity), 0.00)
+                                - coalesce(s.discount_amount, 0.00)
+                           else coalesce(sum(case when si.unit_cost_price is not null
+                               then (si.unit_price - si.unit_cost_price) * si.quantity
+                               else 0.00 end), 0.00)
+                                - case when coalesce(s.discount_amount, 0.00) > 0
+                                    then coalesce(sum(case when si.unit_cost_price is not null
+                                        then si.discount_allocated_amount else 0.00 end), 0.00)
+                                    else 0.00
+                                  end
+                       end as gross_profit_known_amount,
+                       count(case when si.unit_cost_price is null then 1 end)
+                           as items_without_historical_cost
+                from sales s
+                join sale_items si on si.sale_id = s.id
+                where s.status = 'COMPLETED'
+                  and s.created_at >= :start
+                  and s.created_at < :end
+                group by s.id, s.discount_amount
+            ) sale_summary
+            """, nativeQuery = true)
     GrossProfitSummaryProjection getGrossProfitSummary(@Param("start") LocalDateTime start,
                                                        @Param("end") LocalDateTime end);
 

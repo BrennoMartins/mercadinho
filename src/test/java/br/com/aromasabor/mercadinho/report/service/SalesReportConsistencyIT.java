@@ -7,7 +7,10 @@ import br.com.aromasabor.mercadinho.product.repository.ProductRepository;
 import br.com.aromasabor.mercadinho.report.dto.SalesReportResponse;
 import br.com.aromasabor.mercadinho.sale.dto.SaleItemRequestDTO;
 import br.com.aromasabor.mercadinho.sale.dto.SaleRequestDTO;
+import br.com.aromasabor.mercadinho.sale.entity.SaleEntity;
+import br.com.aromasabor.mercadinho.sale.entity.SaleItemEntity;
 import br.com.aromasabor.mercadinho.sale.repository.SaleRepository;
+import br.com.aromasabor.mercadinho.sale.service.SaleGrossProfitCalculator;
 import br.com.aromasabor.mercadinho.sale.service.SaleService;
 import br.com.aromasabor.mercadinho.turn.entity.TurnEntity;
 import br.com.aromasabor.mercadinho.turn.entity.TurnStatus;
@@ -96,6 +99,7 @@ class SalesReportConsistencyIT {
                 .barcode("789000000001")
                 .name("Produto")
                 .price(new BigDecimal("5.00"))
+                .costPrice(new BigDecimal("2.00"))
                 .stock(10)
                 .active(true)
                 .createdAt(now.minusDays(1))
@@ -168,9 +172,13 @@ class SalesReportConsistencyIT {
                 .updatedAt(now.minusDays(1))
                 .build());
 
-        saleService.create(new SaleRequestDTO(List.of(
-                new SaleItemRequestDTO(withCost.getId(), 2),
-                new SaleItemRequestDTO(withoutCost.getId(), 3))));
+        Long completedSaleId = saleService.create(new SaleRequestDTO(List.of(
+                new SaleItemRequestDTO(withCost.getId(), 2)))).getId();
+        jdbcTemplate.update("update sales set subtotal = 27.50, total = 27.50 where id = ?", completedSaleId);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal)
+                VALUES (?, ?, 3, 2.50, 7.50)
+                """, completedSaleId, withoutCost.getId());
 
         jdbcTemplate.update("""
                 INSERT INTO sales (turn_id, status, subtotal, total, created_at)
@@ -202,6 +210,93 @@ class SalesReportConsistencyIT {
                 "select unit_cost_price from sale_items where product_id = ?",
                 BigDecimal.class,
                 withoutCost.getId())).isNull();
+    }
+
+    @Test
+    void shouldReturnIndeterminateProfitForLegacySaleWithMissingCostAndUnallocatedDiscount() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime now = today.atTime(12, 0);
+        insertLegacySaleWithMissingCostAndNullAllocations(now, new BigDecimal("3.00"));
+
+        SalesReportResponse report = salesReportService.getReport(today.toString(), today.toString());
+
+        SaleEntity sale = SaleEntity.builder()
+                .status("COMPLETED")
+                .discountAmount(new BigDecimal("3.00"))
+                .build();
+        sale.addItem(SaleItemEntity.builder()
+                .unitPrice(new BigDecimal("10.00"))
+                .unitCostPrice(new BigDecimal("6.00"))
+                .quantity(1)
+                .build());
+        sale.addItem(SaleItemEntity.builder()
+                .unitPrice(new BigDecimal("20.00"))
+                .unitCostPrice(null)
+                .quantity(1)
+                .build());
+
+        assertThat(SaleGrossProfitCalculator.calculate(sale).knownAmount()).isNull();
+        assertThat(report.getGrossProfitKnownAmount()).isNull();
+        assertThat(report.getGrossProfitComplete()).isFalse();
+        assertThat(report.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+    }
+
+    @Test
+    void shouldCalculateKnownContributionForLegacySaleWithMissingCostAndZeroDiscount() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime now = today.atTime(12, 0);
+        insertLegacySaleWithMissingCostAndNullAllocations(now, BigDecimal.ZERO);
+
+        SalesReportResponse report = salesReportService.getReport(today.toString(), today.toString());
+
+        assertThat(report.getGrossProfitKnownAmount()).isEqualByComparingTo("4.00");
+        assertThat(report.getGrossProfitComplete()).isFalse();
+        assertThat(report.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+    }
+
+    private void insertLegacySaleWithMissingCostAndNullAllocations(
+            LocalDateTime createdAt,
+            BigDecimal discountAmount) {
+        TurnEntity turn = turnRepository.saveAndFlush(TurnEntity.builder()
+                .id(UUID.randomUUID())
+                .openedAt(createdAt.minusHours(1))
+                .operatorName("Operador legado")
+                .status(TurnStatus.OPEN)
+                .build());
+        ProductEntity withCost = productRepository.saveAndFlush(ProductEntity.builder()
+                .barcode("789000000020")
+                .name("Produto com custo legado")
+                .price(new BigDecimal("10.00"))
+                .costPrice(new BigDecimal("6.00"))
+                .stock(10)
+                .active(true)
+                .createdAt(createdAt.minusDays(1))
+                .updatedAt(createdAt.minusDays(1))
+                .build());
+        ProductEntity withoutCost = productRepository.saveAndFlush(ProductEntity.builder()
+                .barcode("789000000021")
+                .name("Produto sem custo legado")
+                .price(new BigDecimal("20.00"))
+                .costPrice(null)
+                .stock(10)
+                .active(true)
+                .createdAt(createdAt.minusDays(1))
+                .updatedAt(createdAt.minusDays(1))
+                .build());
+
+        jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, subtotal, discount_amount, total, created_at)
+                VALUES (?, 'COMPLETED', 30.00, ?, ?, ?)
+                """, turn.getId(), discountAmount, new BigDecimal("30.00").subtract(discountAmount), createdAt);
+        Long saleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal, unit_cost_price)
+                VALUES (?, ?, 1, 10.00, 10.00, 6.00)
+                """, saleId, withCost.getId());
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal, unit_cost_price)
+                VALUES (?, ?, 1, 20.00, 20.00, NULL)
+                """, saleId, withoutCost.getId());
     }
 
     static class ReportQueryBarrier {

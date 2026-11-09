@@ -32,7 +32,8 @@ public class SalesReportResponse {
             example = "29.39")
     private BigDecimal averageTicket;
 
-    @Schema(description = "Lucro bruto calculado apenas para itens com custo histórico conhecido")
+    @Schema(nullable = true, description = "Lucro bruto conhecido no período; null se houver venda cujo lucro "
+            + "não possa ser determinado por falta de custo ou rateio histórico necessário")
     private BigDecimal grossProfitKnownAmount;
 
     @Schema(description = "Indica se todos os itens concluídos do período possuem custo histórico")

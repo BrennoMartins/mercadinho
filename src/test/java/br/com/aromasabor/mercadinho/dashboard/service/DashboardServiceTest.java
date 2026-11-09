@@ -109,6 +109,20 @@ class DashboardServiceTest {
     }
 
     @Test
+    void shouldPreserveIndeterminateDailyGrossProfitAsNull() {
+        when(saleRepository.getDailySummary(start, end))
+                .thenReturn(new DailySummary(1L, new BigDecimal("30.00")));
+        when(saleRepository.getGrossProfitSummary(start, end))
+                .thenReturn(new ProfitSummary(null, 1L));
+
+        DashboardSummaryResponse response = dashboardService.getSummary();
+
+        assertThat(response.getGrossProfitKnownAmount()).isNull();
+        assertThat(response.getGrossProfitComplete()).isFalse();
+        assertThat(response.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+    }
+
+    @Test
     void shouldCalculateAverageTicketFromMultipleSalesWithTwoDecimalPlaces() {
         when(saleRepository.getDailySummary(start, end))
                 .thenReturn(new DailySummary(2L, new BigDecimal("52.55")));

@@ -479,6 +479,7 @@ class StockMovementControllerDbIT {
     @Test
     void shouldDiscardStockAndExposeReasonAndObservationInMovementHistoryWithoutChangingSalesOrTurn() throws Exception {
         ProductEntity product = createProduct("789000000121", "Iogurte");
+        jdbcTemplate.update("update products set cost_price = 2.00 where id = ?", product.getId());
         openTurn();
         mockMvc.perform(post("/api/sales")
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -883,6 +884,7 @@ class StockMovementControllerDbIT {
     @Test
     void shouldPersistSequentialBalancesForDuplicateProductItemsInSale() throws Exception {
         ProductEntity product = createProduct("789000000126", "Arroz");
+        jdbcTemplate.update("update products set cost_price = 6.00 where id = ?", product.getId());
         openTurn();
 
         mockMvc.perform(post("/api/sales")

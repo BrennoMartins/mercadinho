@@ -175,6 +175,7 @@ class SaleControllerDbIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.grossProfitKnownAmount").value(8.00))
                 .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.items[0].unitCostPrice").value(6.00))
                 .andExpect(jsonPath("$.total").value(20.00));
         mockMvc.perform(get("/api/sales"))
                 .andExpect(status().isOk())
@@ -196,6 +197,89 @@ class SaleControllerDbIT {
                 .andExpect(jsonPath("$.grossProfitKnownAmount").value(0.00))
                 .andExpect(jsonPath("$.grossProfitComplete").value(false))
                 .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(1));
+    }
+
+    @Test
+    void shouldRejectSaleWithoutCostWithoutChangingStockSalesMovementsOrTurn() throws Exception {
+        TurnEntity turn = openTurn();
+        ProductEntity product = createActiveProduct("789000000126");
+        jdbcTemplate.update("update products set cost_price = null where id = ?", product.getId());
+
+        mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 1, null, null)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "Produto 'Arroz' não possui custo cadastrado para a venda."));
+
+        assertThat(jdbcTemplate.queryForObject("select count(*) from sales", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("select count(*) from sale_items", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_movements", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "select stock from products where id = ?", Integer.class, product.getId())).isEqualTo(10);
+        assertThat(turnRepository.findById(turn.getId()).orElseThrow().getStatus()).isEqualTo(TurnStatus.OPEN);
+    }
+
+    @Test
+    void shouldKeepHistoricalProductCategoryCostAndDiscountAllocationAfterCatalogChanges() throws Exception {
+        TurnEntity turn = openTurn();
+        CategoryEntity category = categoryRepository.findById(1L).orElseThrow();
+        String originalCategoryName = category.getName();
+        ProductEntity first = createActiveProduct("789000000127");
+        ProductEntity second = createActiveProduct("789000000128");
+        CategoryEntity reclassifiedCategory = categoryRepository.save(CategoryEntity.builder()
+                .name("Categoria posterior")
+                .createdAt(LocalDateTime.now())
+                .build());
+
+        try {
+            MvcResult result = mockMvc.perform(post("/api/sales")
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"discountAmount\":0.01,\"items\":["
+                                    + "{\"productId\":" + first.getId() + ",\"quantity\":1,\"unitPrice\":10.00},"
+                                    + "{\"productId\":" + second.getId() + ",\"quantity\":1,\"unitPrice\":20.00}]}"))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.items[0].productName").value("Arroz"))
+                    .andExpect(jsonPath("$.items[0].categoryId").value(category.getId()))
+                    .andExpect(jsonPath("$.items[0].categoryName").value(originalCategoryName))
+                    .andExpect(jsonPath("$.items[0].unitCostPrice").value(6.00))
+                    .andExpect(jsonPath("$.items[0].subtotal").value(10.00))
+                    .andExpect(jsonPath("$.items[0].discountAllocatedAmount").value(0.00))
+                    .andExpect(jsonPath("$.items[1].discountAllocatedAmount").value(0.01))
+                    .andExpect(jsonPath("$.total").value(29.99))
+                    .andExpect(jsonPath("$.grossProfitKnownAmount").value(17.99))
+                    .andReturn();
+            long saleId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+            jdbcTemplate.update("update products set name = 'Nome posterior', category_id = ? "
+                    + "where id in (?, ?)", reclassifiedCategory.getId(), first.getId(), second.getId());
+            jdbcTemplate.update("update categories set name = 'Nome de categoria posterior' where id = ?",
+                    category.getId());
+
+            mockMvc.perform(get("/api/sales/" + saleId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items[0].productName").value("Arroz"))
+                    .andExpect(jsonPath("$.items[0].categoryId").value(category.getId()))
+                    .andExpect(jsonPath("$.items[0].categoryName").value(originalCategoryName))
+                    .andExpect(jsonPath("$.items[0].unitCostPrice").value(6.00))
+                    .andExpect(jsonPath("$.items[0].discountAllocatedAmount").value(0.00))
+                    .andExpect(jsonPath("$.items[1].productName").value("Arroz"))
+                    .andExpect(jsonPath("$.items[1].categoryName").value(originalCategoryName))
+                    .andExpect(jsonPath("$.items[1].discountAllocatedAmount").value(0.01));
+
+            assertThat(jdbcTemplate.queryForObject(
+                    "select sum(discount_allocated_amount) from sale_items where sale_id = ?",
+                    BigDecimal.class, saleId)).isEqualByComparingTo("0.01");
+            assertThat(jdbcTemplate.queryForObject(
+                    "select sum((subtotal - discount_allocated_amount) - unit_cost_price * quantity) "
+                            + "from sale_items where sale_id = ?",
+                    BigDecimal.class, saleId)).isEqualByComparingTo("17.99");
+        } finally {
+            jdbcTemplate.update("update products set category_id = ? where id in (?, ?)",
+                    category.getId(), first.getId(), second.getId());
+            jdbcTemplate.update("update categories set name = ? where id = ?", originalCategoryName, category.getId());
+            categoryRepository.deleteById(reclassifiedCategory.getId());
+        }
     }
 
     @Test
@@ -527,6 +611,34 @@ class SaleControllerDbIT {
     }
 
     @Test
+    void shouldPersistLargeCalculatedSubtotalWithinExpandedSalePrecision() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000210");
+        jdbcTemplate.update("""
+                update products
+                set price = 99999999.99, cost_price = 0.00, stock = ?
+                where id = ?
+                """, Integer.MAX_VALUE, product.getId());
+        BigDecimal expectedSubtotal = new BigDecimal("99999999.99")
+                .multiply(BigDecimal.valueOf(Integer.MAX_VALUE));
+
+        MvcResult result = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), Integer.MAX_VALUE, "99999999.99", null)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString())
+                .contains("\"total\":" + expectedSubtotal.toPlainString());
+        assertThat(jdbcTemplate.queryForObject("select subtotal from sales", BigDecimal.class))
+                .isEqualByComparingTo(expectedSubtotal);
+        assertThat(jdbcTemplate.queryForObject("select subtotal from sale_items", BigDecimal.class))
+                .isEqualByComparingTo(expectedSubtotal);
+        assertThat(jdbcTemplate.queryForObject("select stock from products where id = ?",
+                Integer.class, product.getId())).isZero();
+    }
+
+    @Test
     void shouldAllowNegotiatedPriceAboveCatalogPrice() throws Exception {
         openTurn();
         ProductEntity product = createActiveProduct("789000000205");
@@ -631,6 +743,7 @@ class SaleControllerDbIT {
                 .name("Arroz")
                 .category(category)
                 .price(new BigDecimal("10.00"))
+                .costPrice(new BigDecimal("6.00"))
                 .stock(10)
                 .active(true)
                 .createdAt(now)

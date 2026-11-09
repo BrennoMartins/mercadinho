@@ -22,9 +22,8 @@ public class SaleResponseDTO {
     private String status;
     private LocalDateTime createdAt;
     private List<SaleItemResponseDTO> items;
-    @Schema(description = "Lucro bruto conhecido: soma das margens dos itens com custo histórico menos o desconto "
-            + "geral da venda. Pode ser negativo quando o desconto supera a margem conhecida, principalmente "
-            + "em vendas com custo incompleto.")
+    @Schema(nullable = true, description = "Lucro bruto conhecido. Null quando há custos desconhecidos e "
+            + "falta o rateio histórico necessário para determinar a contribuição líquida dos itens com custo.")
     private BigDecimal grossProfitKnownAmount;
     private Boolean grossProfitComplete;
     private Long itemsWithoutHistoricalCost;

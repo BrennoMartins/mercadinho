@@ -48,7 +48,9 @@ class SaleControllerIT {
                 new BigDecimal("20.00"),
                 "COMPLETED",
                 LocalDateTime.now(),
-                List.of(new SaleItemResponseDTO(1L, "Arroz", 2, new BigDecimal("10.00"), new BigDecimal("20.00"))),
+                List.of(new SaleItemResponseDTO(
+                        1L, "Arroz", null, null, 2, new BigDecimal("10.00"), new BigDecimal("6.00"),
+                        new BigDecimal("20.00"), BigDecimal.ZERO)),
                 new BigDecimal("8.00"),
                 true,
                 0L

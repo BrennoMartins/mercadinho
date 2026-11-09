@@ -100,6 +100,22 @@ class SalesReportServiceTest {
     }
 
     @Test
+    void shouldPreserveIndeterminateGrossProfitAsNull() {
+        LocalDateTime start = LocalDate.of(2026, 10, 8).atStartOfDay();
+        LocalDateTime end = LocalDate.of(2026, 10, 9).atStartOfDay();
+        when(saleRepository.getDailySummary(start, end)).thenReturn(new SalesSummary(1L, new BigDecimal("30.00")));
+        when(saleRepository.getGrossProfitSummary(start, end)).thenReturn(new ProfitSummary(null, 1L));
+        when(saleRepository.getDailySalesReport(start, end))
+                .thenReturn(List.of(dailySummary(LocalDate.of(2026, 10, 8), 1L, "30.00")));
+
+        SalesReportResponse response = salesReportService.getReport("2026-10-08", "2026-10-08");
+
+        assertThat(response.getGrossProfitKnownAmount()).isNull();
+        assertThat(response.getGrossProfitComplete()).isFalse();
+        assertThat(response.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+    }
+
+    @Test
     void shouldAcceptSingleDayAndReturnItsAggregates() {
         LocalDateTime start = LocalDate.of(2026, 10, 9).atStartOfDay();
         LocalDateTime end = LocalDate.of(2026, 10, 10).atStartOfDay();

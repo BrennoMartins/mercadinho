@@ -28,7 +28,8 @@ public class DashboardSummaryResponse {
     @Schema(description = "Ticket médio das vendas concluídas no dia")
     private BigDecimal averageTicket;
 
-    @Schema(description = "Lucro bruto calculado apenas para itens com custo histórico conhecido")
+    @Schema(nullable = true, description = "Lucro bruto conhecido no dia; null se houver venda cujo lucro "
+            + "não possa ser determinado por falta de custo ou rateio histórico necessário")
     private BigDecimal grossProfitKnownAmount;
 
     @Schema(description = "Indica se todos os itens concluídos do dia possuem custo histórico")

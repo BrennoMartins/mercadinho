@@ -32,7 +32,7 @@ public class SaleController {
     @ApiResponse(responseCode = "201", description = "Venda finalizada com sucesso")
     @ApiResponse(responseCode = "400", description = "Dados inválidos")
     @ApiResponse(responseCode = "404", description = "Produto não encontrado")
-    @ApiResponse(responseCode = "409", description = "Estoque insuficiente")
+    @ApiResponse(responseCode = "409", description = "Estoque insuficiente, turno fechado ou custo do produto ausente")
     public SaleResponseDTO create(@Valid @RequestBody SaleRequestDTO request) {
         return saleService.create(request);
     }

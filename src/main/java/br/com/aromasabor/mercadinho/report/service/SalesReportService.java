@@ -58,7 +58,7 @@ public class SalesReportService {
                 ? ZERO_MONEY
                 : summary.getTotalRevenue();
         GrossProfitSummaryProjection grossProfit = saleRepository.getGrossProfitSummary(start, end);
-        BigDecimal grossProfitKnownAmount = grossProfit == null || grossProfit.getGrossProfitKnownAmount() == null
+        BigDecimal grossProfitKnownAmount = grossProfit == null
                 ? ZERO_MONEY
                 : grossProfit.getGrossProfitKnownAmount();
         long itemsWithoutHistoricalCost = grossProfit == null || grossProfit.getItemsWithoutHistoricalCost() == null
