@@ -109,6 +109,12 @@ class SalesReportConsistencyIT {
                 INSERT INTO sales (turn_id, status, subtotal, total, created_at)
                 VALUES (?, 'COMPLETED', 10.00, 10.00, ?)
                 """, turn.getId(), now);
+        Long initialSaleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal,
+                                        unit_cost_price, discount_allocated_amount)
+                VALUES (?, ?, 2, 5.00, 10.00, 2.00, 0.00)
+                """, initialSaleId, product.getId());
 
         CountDownLatch summaryQueryCompleted = new CountDownLatch(1);
         CountDownLatch continueReport = new CountDownLatch(1);
@@ -135,10 +141,140 @@ class SalesReportConsistencyIT {
                     .containsExactly(new BigDecimal("10.00"));
             assertThat(report.getDailySales()).extracting(entry -> entry.getSalesCount())
                     .containsExactly(1L);
+            assertThat(report.getGrossProfitKnownAmount()).isEqualByComparingTo("6.00");
+            assertThat(report.getGrossProfitComplete()).isTrue();
+            assertThat(report.getItemsWithoutHistoricalCost()).isZero();
+
+            reportQueryBarrier.disarm();
+            SalesReportResponse subsequent = salesReportService.getReport(today.toString(), today.toString());
+            assertThat(subsequent.getTotalRevenue()).isEqualByComparingTo("15.00");
+            assertThat(subsequent.getSalesCount()).isEqualTo(2L);
+            assertThat(subsequent.getAverageTicket()).isEqualByComparingTo("7.50");
+            assertThat(subsequent.getGrossProfitKnownAmount()).isEqualByComparingTo("9.00");
+            assertThat(subsequent.getGrossProfitComplete()).isTrue();
+            assertThat(subsequent.getItemsWithoutHistoricalCost()).isZero();
+            assertThat(subsequent.getDailySales()).extracting(entry -> entry.getSalesCount())
+                    .containsExactly(2L);
         } finally {
             continueReport.countDown();
             reportQueryBarrier.disarm();
         }
+    }
+
+    @Test
+    void shouldReturnNullPeriodProfitWhenKnownAndIndeterminateCompletedSalesShareThePeriod() {
+        LocalDate today = LocalDate.now();
+        TurnEntity turn = turnRepository.saveAndFlush(TurnEntity.builder()
+                .id(UUID.randomUUID())
+                .openedAt(today.atTime(8, 0))
+                .operatorName("Operador")
+                .status(TurnStatus.OPEN)
+                .build());
+        ProductEntity known = createProduct("789000000030", "6.00");
+        Long knownSaleId = saleService.create(new SaleRequestDTO(List.of(
+                new SaleItemRequestDTO(known.getId(), 1)))).getId();
+        // only one turn may be open; the legacy helper opens its own turn
+        jdbcTemplate.update("update turns set status = 'CLOSED', closed_at = ? where id = ?",
+                today.atTime(10, 0), turn.getId());
+        insertLegacySaleWithMissingCostAndNullAllocations(today.atTime(12, 0), new BigDecimal("3.00"));
+
+        SalesReportResponse report = salesReportService.getReport(today.toString(), today.toString());
+
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*) from sales
+                where status = 'COMPLETED' and cast(created_at as date) = ?
+                """, Integer.class, java.sql.Date.valueOf(today))).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "select turn_id from sales where id = ?", UUID.class, knownSaleId)).isEqualTo(turn.getId());
+        assertThat(report.getSalesCount()).isEqualTo(2L);
+        assertThat(report.getTotalRevenue()).isEqualByComparingTo("37.00");
+        assertThat(report.getAverageTicket()).isEqualByComparingTo("18.50");
+        assertThat(report.getGrossProfitKnownAmount()).isNull();
+        assertThat(report.getGrossProfitComplete()).isFalse();
+        assertThat(report.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+    }
+
+    @Test
+    void shouldDeductHeaderDiscountOnceWhenAllCostsAreKnownAndItemAllocationsAreMissing() {
+        LocalDate today = LocalDate.now();
+        Long saleId = insertCompletedSale(today.atTime(12, 0), "30.00", "3.00");
+        ProductEntity first = createProduct("789000000031", "6.00");
+        ProductEntity second = createProduct("789000000032", "4.00");
+        insertItem(saleId, first, "10.00", "6.00", null);
+        insertItem(saleId, second, "20.00", "4.00", null);
+
+        SalesReportResponse report = salesReportService.getReport(today.toString(), today.toString());
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from sale_items where sale_id = ? and discount_allocated_amount is not null",
+                Integer.class, saleId)).isZero();
+        assertThat(report.getSalesCount()).isEqualTo(1L);
+        assertThat(report.getTotalRevenue()).isEqualByComparingTo("27.00");
+        // (10 - 6) + (20 - 4) - 3.00 header discount, deducted once
+        assertThat(report.getGrossProfitKnownAmount()).isEqualByComparingTo("17.00");
+        assertThat(report.getGrossProfitComplete()).isTrue();
+        assertThat(report.getItemsWithoutHistoricalCost()).isZero();
+    }
+
+    @Test
+    void shouldKeepKnownProfitWhenOnlyTheUnknownCostItemLacksAllocation() {
+        LocalDate today = LocalDate.now();
+        Long saleId = insertCompletedSale(today.atTime(12, 0), "30.00", "3.00");
+        ProductEntity known = createProduct("789000000033", "6.00");
+        ProductEntity unknown = createProduct("789000000034", null);
+        insertItem(saleId, known, "10.00", "6.00", "1.00");
+        insertItem(saleId, unknown, "20.00", null, null);
+
+        SalesReportResponse report = salesReportService.getReport(today.toString(), today.toString());
+
+        assertThat(report.getSalesCount()).isEqualTo(1L);
+        assertThat(report.getTotalRevenue()).isEqualByComparingTo("27.00");
+        // known item: (10 - 6) - 1.00 allocated; the unknown-cost item contributes nothing
+        assertThat(report.getGrossProfitKnownAmount()).isEqualByComparingTo("3.00");
+        assertThat(report.getGrossProfitComplete()).isFalse();
+        assertThat(report.getItemsWithoutHistoricalCost()).isEqualTo(1L);
+    }
+
+    private ProductEntity createProduct(String barcode, String costPrice) {
+        LocalDateTime past = LocalDateTime.now().minusDays(1);
+        return productRepository.saveAndFlush(ProductEntity.builder()
+                .barcode(barcode)
+                .name("Produto " + barcode)
+                .price(new BigDecimal("10.00"))
+                .costPrice(costPrice == null ? null : new BigDecimal(costPrice))
+                .stock(10)
+                .active(true)
+                .createdAt(past)
+                .updatedAt(past)
+                .build());
+    }
+
+    private Long insertCompletedSale(LocalDateTime createdAt, String subtotal, String discount) {
+        TurnEntity turn = turnRepository.saveAndFlush(TurnEntity.builder()
+                .id(UUID.randomUUID())
+                .openedAt(createdAt.minusHours(1))
+                .operatorName("Operador legado")
+                .status(TurnStatus.OPEN)
+                .build());
+        BigDecimal subtotalAmount = new BigDecimal(subtotal);
+        BigDecimal discountAmount = new BigDecimal(discount);
+        jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, subtotal, discount_amount, total, created_at)
+                VALUES (?, 'COMPLETED', ?, ?, ?, ?)
+                """, turn.getId(), subtotalAmount, discountAmount, subtotalAmount.subtract(discountAmount),
+                createdAt);
+        return jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
+    }
+
+    private void insertItem(Long saleId, ProductEntity product, String price, String cost, String allocation) {
+        BigDecimal unitPrice = new BigDecimal(price);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal,
+                                        unit_cost_price, discount_allocated_amount)
+                VALUES (?, ?, 1, ?, ?, ?, ?)
+                """, saleId, product.getId(), unitPrice, unitPrice,
+                cost == null ? null : new BigDecimal(cost),
+                allocation == null ? null : new BigDecimal(allocation));
     }
 
     @Test

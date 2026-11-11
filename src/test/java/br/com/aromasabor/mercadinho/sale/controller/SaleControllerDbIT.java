@@ -713,6 +713,85 @@ class SaleControllerDbIT {
     }
 
     @Test
+    void shouldPersistAndReadZeroHistoricalCostAsKnownCostNotNull() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000211");
+        jdbcTemplate.update("update products set cost_price = 0.00 where id = ?", product.getId());
+
+        MvcResult result = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 2, null, null)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.items[0].unitCostPrice").value(0.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(20.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(0))
+                .andReturn();
+        long saleId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from sale_items where sale_id = ? and unit_cost_price is null",
+                Integer.class, saleId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "select unit_cost_price from sale_items where sale_id = ?", BigDecimal.class, saleId))
+                .isEqualByComparingTo("0.00");
+
+        jdbcTemplate.update("update products set cost_price = 7.00 where id = ?", product.getId());
+
+        MvcResult reread = mockMvc.perform(get("/api/sales/" + saleId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].unitCostPrice").value(0.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(20.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(0))
+                .andReturn();
+        assertThat(objectMapper.readTree(reread.getResponse().getContentAsString())
+                .get("items").get(0).get("unitCostPrice").isNull()).isFalse();
+    }
+
+    @Test
+    void shouldReturnKnownCompleteZeroProfitForCompletedSaleWithZeroMargin() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000212");
+        jdbcTemplate.update("update products set cost_price = 6.00 where id = ?", product.getId());
+
+        // subtotal 10.00 - cost 6.00 - discount 4.00 = 0.00
+        MvcResult result = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 1, null, "4.00")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.total").value(6.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(0.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(0))
+                .andReturn();
+        long saleId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+        assertThat(objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("grossProfitKnownAmount").isNull()).isFalse();
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select status from sales where id = ?", String.class, saleId)).isEqualTo("COMPLETED");
+        assertThat(jdbcTemplate.queryForObject("""
+                select sum((subtotal - discount_allocated_amount) - unit_cost_price * quantity)
+                from sale_items where sale_id = ?
+                """, BigDecimal.class, saleId)).isEqualByComparingTo("0.00");
+
+        mockMvc.perform(get("/api/sales/" + saleId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(0.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true));
+
+        String today = java.time.LocalDate.now().toString();
+        mockMvc.perform(get("/api/reports/sales").param("startDate", today).param("endDate", today))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.salesCount").value(1))
+                .andExpect(jsonPath("$.totalRevenue").value(6.00))
+                .andExpect(jsonPath("$.grossProfitKnownAmount").value(0.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(true));
+    }
+
+    @Test
     void shouldRejectInconsistentSaleTotalsAtDatabaseLevel() {
         TurnEntity turn = openTurn();
 
@@ -724,6 +803,177 @@ class SaleControllerDbIT {
                 INSERT INTO sales (turn_id, status, subtotal, discount_amount, total, created_at)
                 VALUES (?, 'COMPLETED', 10.00, 11.00, -1.00, ?)
                 """, turn.getId(), LocalDateTime.now())).isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void shouldSerializeNullProfitAndAbsentLegacySnapshotsAsExplicitNullsInSaleJson() throws Exception {
+        LegacyIndeterminateSale legacy = insertLegacyIndeterminateSale(openTurn());
+        jdbcTemplate.update("update products set name = 'Renomeado', category_id = 2, cost_price = 99.00, price = 50.00"
+                + " where id in (?, ?)", legacy.knownProductId(), legacy.unknownProductId());
+
+        MvcResult result = mockMvc.perform(get("/api/sales/" + legacy.saleId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subtotal").value(30.00))
+                .andExpect(jsonPath("$.discountAmount").value(3.00))
+                .andExpect(jsonPath("$.total").value(27.00))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.grossProfitComplete").value(false))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(1))
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andReturn();
+
+        JsonNode sale = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(sale.has("grossProfitKnownAmount")).isTrue();
+        assertThat(sale.get("grossProfitKnownAmount").isNull()).isTrue();
+
+        for (JsonNode item : sale.get("items")) {
+            for (String field : new String[] {"productName", "categoryId", "categoryName", "discountAllocatedAmount"}) {
+                assertThat(item.has(field)).as("field %s present", field).isTrue();
+                assertThat(item.get(field).isNull()).as("field %s is null", field).isTrue();
+            }
+            assertThat(item.get("unitPrice").decimalValue()).isEqualByComparingTo(
+                    item.get("subtotal").decimalValue());
+        }
+        JsonNode known = sale.get("items").get(0);
+        JsonNode unknown = sale.get("items").get(1);
+        assertThat(known.get("productId").asLong()).isEqualTo(legacy.knownProductId());
+        assertThat(known.get("unitCostPrice").decimalValue()).isEqualByComparingTo("6.00");
+        assertThat(known.get("subtotal").decimalValue()).isEqualByComparingTo("10.00");
+        assertThat(unknown.get("productId").asLong()).isEqualTo(legacy.unknownProductId());
+        assertThat(unknown.has("unitCostPrice")).isTrue();
+        assertThat(unknown.get("unitCostPrice").isNull()).isTrue();
+        assertThat(unknown.get("subtotal").decimalValue()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void shouldSerializeZeroCostAndZeroAllocationAsZeroNotNull() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000221");
+        jdbcTemplate.update("update products set cost_price = 0.00 where id = ?", product.getId());
+
+        MvcResult result = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 1, null, null)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long saleId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+        for (String body : new String[] {
+                result.getResponse().getContentAsString(),
+                mockMvc.perform(get("/api/sales/" + saleId)).andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString()}) {
+            JsonNode sale = objectMapper.readTree(body);
+            JsonNode item = sale.get("items").get(0);
+            assertThat(item.get("unitCostPrice").isNull()).isFalse();
+            assertThat(item.get("unitCostPrice").decimalValue()).isEqualByComparingTo("0.00");
+            assertThat(item.get("discountAllocatedAmount").isNull()).isFalse();
+            assertThat(item.get("discountAllocatedAmount").decimalValue()).isEqualByComparingTo("0.00");
+            assertThat(sale.get("grossProfitKnownAmount").isNull()).isFalse();
+            assertThat(sale.get("grossProfitKnownAmount").decimalValue()).isEqualByComparingTo("10.00");
+        }
+    }
+
+    @Test
+    void shouldSerializeKnownZeroProfitAsZeroNotNullInSaleJson() throws Exception {
+        openTurn();
+        ProductEntity product = createActiveProduct("789000000222");
+
+        MvcResult result = mockMvc.perform(post("/api/sales")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content(saleJson(product.getId(), 1, null, "4.00")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long saleId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+        for (String body : new String[] {
+                result.getResponse().getContentAsString(),
+                mockMvc.perform(get("/api/sales/" + saleId)).andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString()}) {
+            JsonNode sale = objectMapper.readTree(body);
+            assertThat(sale.get("grossProfitKnownAmount").isNull()).isFalse();
+            assertThat(sale.get("grossProfitKnownAmount").decimalValue()).isEqualByComparingTo("0.00");
+            assertThat(sale.get("grossProfitComplete").asBoolean()).isTrue();
+            assertThat(sale.get("items").get(0).get("discountAllocatedAmount").decimalValue())
+                    .isEqualByComparingTo("4.00");
+        }
+    }
+
+    @Test
+    void shouldSerializeNullProfitInReportJsonFromRealServiceAndDatabase() throws Exception {
+        insertLegacyIndeterminateSale(openTurn());
+        String today = java.time.LocalDate.now().toString();
+
+        MvcResult result = mockMvc.perform(get("/api/reports/sales")
+                        .param("startDate", today).param("endDate", today))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRevenue").value(27.00))
+                .andExpect(jsonPath("$.salesCount").value(1))
+                .andExpect(jsonPath("$.averageTicket").value(27.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(false))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(1))
+                .andExpect(jsonPath("$.dailySales.length()").value(1))
+                .andExpect(jsonPath("$.dailySales[0].date").value(today))
+                .andExpect(jsonPath("$.dailySales[0].revenue").value(27.00))
+                .andExpect(jsonPath("$.dailySales[0].salesCount").value(1))
+                .andReturn();
+
+        JsonNode report = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(report.has("grossProfitKnownAmount")).isTrue();
+        assertThat(report.get("grossProfitKnownAmount").isNull()).isTrue();
+    }
+
+    @Test
+    void shouldSerializeNullProfitInDashboardJsonFromRealServiceAndDatabase() throws Exception {
+        TurnEntity turn = openTurn();
+        LegacyIndeterminateSale legacy = insertLegacyIndeterminateSale(turn);
+
+        MvcResult result = mockMvc.perform(get("/api/dashboard/summary"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.date").value(java.time.LocalDate.now().toString()))
+                .andExpect(jsonPath("$.revenue").value(27.00))
+                .andExpect(jsonPath("$.salesCount").value(1))
+                .andExpect(jsonPath("$.averageTicket").value(27.00))
+                .andExpect(jsonPath("$.grossProfitComplete").value(false))
+                .andExpect(jsonPath("$.itemsWithoutHistoricalCost").value(1))
+                .andExpect(jsonPath("$.currentTurn.id").value(turn.getId().toString()))
+                .andExpect(jsonPath("$.recentSales.length()").value(1))
+                .andExpect(jsonPath("$.recentSales[0].id").value(legacy.saleId()))
+                .andExpect(jsonPath("$.recentSales[0].total").value(27.00))
+                .andReturn();
+
+        JsonNode summary = objectMapper.readTree(result.getResponse().getContentAsString());
+        assertThat(summary.has("grossProfitKnownAmount")).isTrue();
+        assertThat(summary.get("grossProfitKnownAmount").isNull()).isTrue();
+
+        mockMvc.perform(get("/api/dashboard/top-products"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+        mockMvc.perform(get("/api/dashboard/low-stock"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+    }
+
+    private record LegacyIndeterminateSale(Long saleId, Long knownProductId, Long unknownProductId) {
+    }
+
+    // Legacy sale: no snapshots, header discount 3.00, null allocations, one item without cost.
+    private LegacyIndeterminateSale insertLegacyIndeterminateSale(TurnEntity turn) {
+        ProductEntity known = createActiveProduct("789000000231");
+        ProductEntity unknown = createActiveProduct("789000000232");
+        jdbcTemplate.update("""
+                INSERT INTO sales (turn_id, status, subtotal, discount_amount, total, created_at)
+                VALUES (?, 'COMPLETED', 30.00, 3.00, 27.00, ?)
+                """, turn.getId(), LocalDateTime.now());
+        Long saleId = jdbcTemplate.queryForObject("SELECT max(id) FROM sales", Long.class);
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal, unit_cost_price)
+                VALUES (?, ?, 1, 10.00, 10.00, 6.00)
+                """, saleId, known.getId());
+        jdbcTemplate.update("""
+                INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, subtotal)
+                VALUES (?, ?, 1, 20.00, 20.00)
+                """, saleId, unknown.getId());
+        return new LegacyIndeterminateSale(saleId, known.getId(), unknown.getId());
     }
 
     private String saleJson(Long productId, int quantity, String unitPrice, String discountAmount) {
